@@ -1,0 +1,164 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>com.thtf.spark</groupId>
+	<artifactId>BeijingMetroEnergy</artifactId>
+	<version>0.0.2-SNAPSHOT</version>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<hadoop.version>2.7.3</hadoop.version>
+		<spark.version>2.0.0</spark.version>
+		<hbase.version>1.1.2</hbase.version>
+		<mysql.version>5.1.47</mysql.version>
+		<log4j.version>1.2.17</log4j.version>
+	</properties>
+
+
+	<repositories>
+		<repository>
+			<id>hortonworks</id>
+			<name>hortonworks Repository</name>
+			<url>http://repo.hortonworks.com/content/repositories/releases/</url>
+		</repository>
+		<repository>
+			<id>SpringPlugins</id>
+			<name>Spring Plugins</name>
+			<url>http://repo.spring.io/plugins-release/</url>
+		</repository>
+	</repositories>
+
+
+	<dependencies>
+
+		<dependency><!-- spark -->
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-core_2.11</artifactId>
+			<version>${spark.version}</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-streaming-kafka-0-10_2.11</artifactId>
+			<version>${spark.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-streaming_2.11</artifactId>
+			<version>${spark.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-sql_2.11</artifactId>
+			<version>${spark.version}</version>
+		</dependency>
+
+
+		<dependency><!-- Hbase -->
+			<groupId>org.apache.hbase</groupId>
+			<artifactId>hbase-client</artifactId>
+			<version>${hbase.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.hbase</groupId>
+			<artifactId>hbase-common</artifactId>
+			<version>${hbase.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.hbase</groupId>
+			<artifactId>hbase-server</artifactId>
+			<version>${hbase.version}</version>
+		</dependency>
+		<dependency>
+		  <groupId>org.apache.hbase</groupId>
+		  <artifactId>hbase-spark</artifactId>
+		  <version>1.1.2.2.6.5.8-7</version>
+		</dependency>
+		<!-- 
+		<dependency>
+			<groupId>org.apache.hbase</groupId>
+			<artifactId>hbase-mapreduce</artifactId>
+			<version>${hbase.version}</version>
+		</dependency>
+		 -->
+		
+		
+		<dependency><!-- mysql -->
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>${mysql.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+
+		<dependency>
+			<groupId>org.apache.kerby</groupId>
+			<artifactId>kerb-crypto</artifactId>
+			<version>1.0.1</version>
+		</dependency>
+		
+		<dependency><!-- log4j -->
+		    <groupId>log4j</groupId>
+		    <artifactId>log4j</artifactId>
+		    <version>${log4j.version}</version>
+		</dependency>
+		
+
+	</dependencies>
+	
+	
+	<dependencyManagement>
+      <dependencies>
+        <dependency>
+            <groupId>net.minidev</groupId>
+            <artifactId>json-smart</artifactId>
+            <version>2.3</version>
+        </dependency>
+      </dependencies>
+	</dependencyManagement>
+
+
+	<build>
+		<sourceDirectory>src</sourceDirectory>
+		<plugins>
+			<plugin>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.7.0</version>
+				<configuration>
+					<source>1.8</source>
+					<target>1.8</target>
+				</configuration>
+			</plugin>
+			
+			<!-- 
+			<plugin>
+		      <artifactId>maven-assembly-plugin</artifactId>
+		      <configuration>
+		        <descriptors>
+		          <descriptor>assembly-release.xml</descriptor>
+		        </descriptors>
+		      </configuration>
+		 
+		      <executions>
+		        <execution>
+		          <id>make-assembly</id> this is used for inheritance merges
+		          <phase>package</phase> bind to the packaging phase
+		          <goals>
+		            <goal>single</goal>
+		          </goals>
+		        </execution>
+		      </executions>
+		    </plugin>
+		     -->
+
+			<!--打jar包 项目本身的依赖包放在lib文件夹下 (lib与生成的jar在同一目录) <plugin> <groupId>org.apache.maven.plugins</groupId> 
+				<artifactId>maven-dependency-plugin</artifactId> <executions> <execution> 
+				<id>copy-dependencies</id> <phase>package</phase> <goals> <goal>copy-dependencies</goal> 
+				</goals> <configuration> <type>jar</type> <includeTypes>jar</includeTypes> 
+				<useUninqeVersions>false</useUninqeVersions> <outputDirectory> ${project.build.directory}/lib 
+				</outputDirectory> </configuration> </execution> </executions> </plugin> -->
+
+		</plugins>
+	</build>
+</project>
