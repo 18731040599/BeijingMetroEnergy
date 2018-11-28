@@ -24,13 +24,13 @@ object FileToHbase {
     // 时间
     val calendar = Calendar.getInstance
     val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
-    val endTime = simpleDateFormat.format(calendar.getTime)
-    //val endTime = "2018-10-10 10:20:00"
+    //val endTime = simpleDateFormat.format(calendar.getTime)
+    val endTime = "20180810002000"
 
     val file = new File("F:/java/mysql")
     val files = file.list(new FilenameFilter() {
       def accept(dir: File, name: String): Boolean = {
-        if (name.startsWith("")) {
+        if (name.startsWith(endTime)) {
           return true
         }
         return false
@@ -51,7 +51,10 @@ object FileToHbase {
     val center_fields = "lineName abbreviation projectName description eneryMgr".split(" ")
     val line_fields = "stationName abbreviation lineName description area eneryMgr transferstation".split(" ")
     val point_fields = "lineName stationName pointName type controlID equipmentID equipmentName dataType statics unit quantity lowerLimitValue upperLimitValue description".split(" ")
-    val user_fields = "id name password age".split(" ")
+    val tables = Map(
+      "center" -> center_fields,
+      "line" -> line_fields,
+      "point" -> point_fields)
 
     // 改变列名
     //df_csv.withColumnRenamed("_c0", "id").show()
@@ -64,6 +67,68 @@ object FileToHbase {
       .map(row => (row(0).asInstanceOf[Int],row(1).asInstanceOf[String],row(2).asInstanceOf[String],row(3).asInstanceOf[Int]))
     */
 
+    // 定义Hbase的配置
+    val conf = HBaseConfiguration.create()
+    conf.set("hbase.zookeeper.property.clientPort", "2181")
+    conf.set("hbase.zookeeper.quorum", "stest")
+    // 指定输出格式和输出表名
+    val jobConf = new JobConf(conf, this.getClass)
+    jobConf.setOutputFormat(classOf[TableOutputFormat])
+
+    // 方案二：全部存String类型的数据
+    for (f <- files) {
+      val fs = f.split("_")
+      if (fs.length == 2) {
+        jobConf.set(TableOutputFormat.OUTPUT_TABLE, fs(1).dropRight(4))
+        // 读取文件转化为RDD
+        val sc = spark.sparkContext
+        val rdd = sc.textFile(s"F:/java/mysql/${f}").map(line => {
+          line.split("\t")
+        })
+        var id = 0
+        val resultRdd = rdd.map(row => {
+          val p = new Put(Bytes.toBytes(id))
+          id += 1
+          for (i <- 0 to row.length - 1) {
+            p.addColumn(Bytes.toBytes("c"), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
+          }
+          (new ImmutableBytesWritable, p)
+        })
+        resultRdd.saveAsHadoopDataset(jobConf)
+      } else if (fs.length == 4) {
+        jobConf.set(TableOutputFormat.OUTPUT_TABLE, "hisdataYX")
+        // 读取文件转化为RDD
+        val sc = spark.sparkContext
+        val rdd = sc.textFile(s"F:/java/mysql/${f}").map(line => {
+          line.split("\t")
+        })
+        val resultRdd = rdd.map(row => {
+          val p = new Put(Bytes.toBytes(fs(3).dropRight(4) + row(0) + row(1).replaceAll("[^0-9]", "")))
+          p.addColumn(Bytes.toBytes("c"), Bytes.toBytes("value"), Bytes.toBytes(row(2)))
+          (new ImmutableBytesWritable, p)
+        })
+        resultRdd.saveAsHadoopDataset(jobConf)
+      } else if (fs.length == 5) {
+        jobConf.set(TableOutputFormat.OUTPUT_TABLE, "hisdataYC")
+        // 读取文件转化为RDD
+        val sc = spark.sparkContext
+        val rdd = sc.textFile(s"F:/java/mysql/${f}").map(line => {
+          line.split("\t")
+        })
+        val resultRdd = rdd.map(row => {
+          val p = new Put(Bytes.toBytes(fs(3) + row(0).replaceAll("[^0-9]", "")))
+          val columns = (fs(4).dropRight(4).toInt - 1).*(200)
+          for (i <- 1 to row.length - 1) {
+            p.addColumn(Bytes.toBytes("c"), Bytes.toBytes((columns + i - 1).toString()), Bytes.toBytes(row(i)))
+          }
+          (new ImmutableBytesWritable, p)
+        })
+        resultRdd.saveAsHadoopDataset(jobConf)
+      }
+    }
+
+    /*
+    // 方案一：存入对应类型的数据
     var rowId: Int = 0
     // 将 *RDD[(id:Int, name:String, password:String, age:Int)]* 转换成 *RDD[(ImmutableBytesWritable, Put)]*
     def center_convert(fields: Array[String]) = {
@@ -118,15 +183,6 @@ object FileToHbase {
       (new ImmutableBytesWritable, p)
     }
 
-    // 将 *RDD[(id:Int, name:String, password:String, age:Int)]* 转换成 *RDD[(ImmutableBytesWritable, Put)]*
-    def user_convert(fields: Array[String]) = {
-      val p = new Put(Bytes.toBytes(fields(0)))
-      p.addColumn(Bytes.toBytes("f"), Bytes.toBytes(user_fields(1)), Bytes.toBytes(fields(1)))
-      p.addColumn(Bytes.toBytes("f"), Bytes.toBytes(user_fields(2)), Bytes.toBytes(fields(2)))
-      p.addColumn(Bytes.toBytes("f"), Bytes.toBytes(user_fields(3)), Bytes.toBytes(fields(3).toInt))
-      (new ImmutableBytesWritable, p)
-    }
-
     // 定义Hbase的配置
     val conf = HBaseConfiguration.create()
     conf.set("hbase.zookeeper.property.clientPort", "2181")
@@ -136,7 +192,7 @@ object FileToHbase {
     jobConf.setOutputFormat(classOf[TableOutputFormat])
 
     for (f <- files) {
-      println(f)
+      val fs = f.split("_")
       jobConf.set(TableOutputFormat.OUTPUT_TABLE, f.dropRight(4))
       // 读取文件转化为RDD
       val sc = spark.sparkContext
@@ -154,8 +210,8 @@ object FileToHbase {
         val resultRdd = rdd.map(point_convert)
         resultRdd.saveAsHadoopDataset(jobConf)
       }
-
     }
+    */
 
     println("Done!")
 
