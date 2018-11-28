@@ -3,10 +3,15 @@ package com.thtf.sparksql
 import java.util.{ Properties, Calendar }
 import org.apache.spark.sql.{ SparkSession, Row }
 import org.apache.spark.sql.types._
-import java.util.Date
 import java.text.SimpleDateFormat
-import java.io.FileInputStream
-import java.io.File
+import java.io.{ FileInputStream, File }
+import org.apache.spark.SparkConf
+import org.apache.hadoop.hbase.HBaseConfiguration
+import org.apache.hadoop.hbase.mapreduce.TableInputFormat
+import org.apache.hadoop.hbase.util.{ Base64, Bytes }
+import org.apache.hadoop.hbase.client._
+import org.apache.hadoop.hbase.protobuf.ProtobufUtil
+import org.apache.hadoop.hbase.filter._
 
 case class KPI(
   Time: String,
@@ -20,17 +25,21 @@ case class KPI(
   d20: Double,
   d24: Double)
 object TestOnMySQL {
-  val spark = SparkSession
-    .builder()
-    .appName("Spark SQL basic example")
-    .master("local")
-    .config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
-    .getOrCreate()
-  // For implicit conversions like converting RDDs to DataFrames
-  import spark.implicits._
   def main(args: Array[String]): Unit = {
 
     println("Start!")
+
+    // 时间
+    val calendar = Calendar.getInstance
+    val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
+    //val endTime = simpleDateFormat.format(calendar.getTime)
+    val endTime = "20181010102000"
+    calendar.add(Calendar.MINUTE, -20)
+    //val startTime = simpleDateFormat.format(calendar.getTime)
+    val startTime = "20181010100000"
+    calendar.add(Calendar.MINUTE, -(20 * 71))
+    //val lastDay = simpleDateFormat.format(calendar.getTime)
+    val lastDay = "20181009102000"
 
     // 读取配置文件
     val properties = new Properties
@@ -39,51 +48,6 @@ object TestOnMySQL {
     } catch {
       case t: Throwable => t.printStackTrace() // TODO: handle error
     }
-
-    // 时间
-    val calendar = Calendar.getInstance
-    val simpleDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:00")
-    //val endTime = simpleDateFormat.format(calendar.getTime)
-    val endTime = "2018-10-10 10:20:00"
-    calendar.add(Calendar.MINUTE, -20)
-    //val startTime = simpleDateFormat.format(calendar.getTime)
-    val startTime = "2018-10-10 10:00:00"
-    calendar.add(Calendar.MINUTE, -(20 * 71))
-    val lastDay = simpleDateFormat.format(calendar.getTime)
-
-    // 静态表名
-    val point = "point"
-    val center = "center"
-    val line = "line"
-
-    // 动态表名
-    var hisdata_1 = "hisdata_bj8_slgynm_1"
-    var hisdata_2 = "hisdata_bj8_slgynm_2"
-    var hisdata_3 = "hisdata_bj8_slgynm_3"
-    var hisdataYX = "hisdataYX_bj8_slgynm"
-    //var hisdata_1 = ""
-    //var hisdata_2 = ""
-    //var hisdata_3 = ""
-    //var hisdataYX = ""
-
-    // 配置信息
-    val options = Map(
-      "url" -> "jdbc:mysql://stest:3306/metrosavingexpert",
-      "driver" -> "com.mysql.jdbc.Driver",
-      "user" -> "root",
-      "password" -> "thtf106")
-
-    // 读取表数据
-    val reader = spark.read.format("jdbc").options(options)
-
-    reader.option("dbtable", point).load().createTempView(point)
-    spark.sql(s"select count(*) from `${point}`").show()
-
-    reader.option("dbtable", center).load().createTempView(center)
-    spark.sql(s"select count(*) from `${center}`").show()
-
-    reader.option("dbtable", line).load().createTempView(line)
-    spark.sql(s"select count(*) from `${line}`").show()
 
     // 常量参数
     val water_specificHeat: Double = properties.getProperty("water_specificHeat").toDouble
@@ -113,7 +77,6 @@ object TestOnMySQL {
     var station_abbr: String = ""
     // 面积
     var area: Double = 0
-
     // 运行状态
     var run_status: Double = 0
     var SF_run_status: Double = 0
@@ -121,19 +84,15 @@ object TestOnMySQL {
     var consumption: Double = 0
     // 累计次数
     var cumulative_number: Double = 0
-
     // 冷水
     var water_yield: Double = 0
     var water_IT: Double = 0
     var water_OT: Double = 0
-
     // 风量
     var air_yield: Double = 0
-
     // 频率
     var KT_Hz: Double = 0
     var HPF_Hz: Double = 0
-
     // 温度
     var HF_T: Double = 0
     var SF_T: Double = 0
@@ -141,7 +100,6 @@ object TestOnMySQL {
     var ZT_T: Double = 0
 
     // =================== regex ===================
-
     // 冷水机组
     val LSJZ_Run_Regex = "LSJZ___i%Run_St"
     val LSJZ_ZNDB_Regex = "ZNDB_LS___Wp_Tm"
@@ -168,7 +126,6 @@ object TestOnMySQL {
     val XF_T_Regex = "TH_SWD____Temp_Tm"
     val ZTX_T_Regex = "TH_ZTX_____Temp_Tm"
     val ZTS_T_Regex = "TH_ZTS_____Temp_Tm"
-
     // 冷冻水
     val LD_yield_Regex = "FT_LDD_0__Ft_Tm"
     val LD_IT_Regex = "TE_LDJD_01_Temp_Tm"
@@ -180,6 +137,59 @@ object TestOnMySQL {
     // 总电耗
     val ALL_ZNDB_Regex = "ZNDB%Wp_Tm"
     // =========================================================
+
+    // 创建sparksession
+    val spark = SparkSession
+      .builder()
+      .appName("Spark SQL basic example")
+      .master("local")
+      .config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
+      .getOrCreate()
+    // For implicit conversions like converting RDDs to DataFrames
+    import spark.implicits._
+
+    // 静态表名
+    val point = "point"
+    val center = "center"
+    val line = "line"
+
+    // 表的字段名
+    val center_fields = "lineName abbreviation projectName description eneryMgr".split(" ")
+    val line_fields = "stationName abbreviation lineName description area eneryMgr transferstation".split(" ")
+    val point_fields = "lineName stationName pointName type controlID equipmentID equipmentName dataType statics unit quantity lowerLimitValue upperLimitValue description".split(" ")
+    val tables = Map(
+      "center" -> center_fields,
+      "line" -> line_fields,
+      "point" -> point_fields)
+
+    // 动态表名
+    var hisdata_1 = "hisdata_bj8_slgynm_1"
+    var hisdata_2 = "hisdata_bj8_slgynm_2"
+    var hisdata_3 = "hisdata_bj8_slgynm_3"
+    var hisdataYX = "hisdataYX_bj8_slgynm"
+    //var hisdata_1 = ""
+    //var hisdata_2 = ""
+    //var hisdata_3 = ""
+    //var hisdataYX = ""
+
+    // 配置信息
+    val options = Map(
+      "url" -> "jdbc:mysql://stest:3306/metrosavingexpert",
+      "driver" -> "com.mysql.jdbc.Driver",
+      "user" -> "root",
+      "password" -> "thtf106")
+
+    // 读取表数据
+    val reader = spark.read.format("jdbc").options(options)
+
+    reader.option("dbtable", point).load().createTempView(point)
+    spark.sql(s"select count(*) from `${point}`").show()
+
+    reader.option("dbtable", center).load().createTempView(center)
+    spark.sql(s"select count(*) from `${center}`").show()
+
+    reader.option("dbtable", line).load().createTempView(line)
+    spark.sql(s"select count(*) from `${line}`").show()
 
     // 查询线路
     //val center_records = null
@@ -468,40 +478,87 @@ object TestOnMySQL {
       }
     }
     println("Done!")
-    // 获取运行状态
-    def assign_runStatus(IDAndValue: Array[Row]): Double = {
-      // TODO
-      if (IDAndValue == null) {
-        return 0
-      } else {
-        return 1
-      }
+
+    // =================== 将读取hbase，将rdd转换为dataframe ===================
+    def finalHtableToDF(tablename: String) {
+      // 定义Hbase的配置
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
+      conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
+        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
+        classOf[org.apache.hadoop.hbase.client.Result])
+        .map(_._2)
+        .map(result => {
+          var row = Row(Bytes.toString(result.getRow))
+          for (i <- 1 to result.size()) {
+            row = Row.merge(row, Row(Bytes.toString(result.getValue("c".getBytes, tables.getOrElse(tablename, null)(i).getBytes))))
+          }
+          row
+        })
+      // 以编程的方式指定 Schema，将RDD转化为DataFrame
+      val fields = tables.getOrElse(point, null).map(field => StructField(field, StringType, nullable = true))
+      spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
     }
-    // 获取累计消耗电量
-    def assign_powerConsumption(IDAndValue: Array[Row]): Double = {
-      var sumPower: Double = 0
-      if (IDAndValue == null || IDAndValue.length == 1) {
-        return sumPower
-      } else {
-        for (i <- 1 to IDAndValue(0).size - 1) {
-          sumPower += Math.abs((IDAndValue(0).getDouble(i) - IDAndValue(1).getDouble(i)))
-        }
-        return sumPower
-      }
+    // ========================================
+
+    // =================== 将读取hbase，将rdd转换为dataframe ===================
+    def hisdataYCToDF(tablename: String) {
+      // 定义Hbase的配置
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
+      conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      val filter = new RowFilter(CompareFilter.CompareOp.EQUAL, new RegexStringComparator(s".*(${startTime}|${endTime}){1}"))
+      conf.set(TableInputFormat.SCAN, convertScanToString(new Scan().setFilter(filter)))
+      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
+        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
+        classOf[org.apache.hadoop.hbase.client.Result])
+        .map(_._2)
+        .map(result => {
+          var row = Row(Bytes.toString(result.getRow).dropRight(14), Bytes.toString(result.getRow).takeRight(14))
+          for (i <- 0 to result.size() - 1) {
+            row = Row.merge(row, Row(Bytes.toString(result.getValue("c".getBytes, i.toString().getBytes))))
+          }
+          row
+        })
+      // 以编程的方式指定 Schema，将RDD转化为DataFrame
+      val fields = (-2 to 599).toArray.map(field => StructField(field.toString(), StringType, nullable = true))
+      fields(0) = StructField("abbreviation".toString(), StringType, nullable = true)
+      fields(1) = StructField("TIME".toString(), StringType, nullable = true)
+      spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
     }
-    // 平均值数据(瞬时流量，进出水温度，温度，频率)
-    def assign_instant(IDAndValue: Array[Row]): Double = {
-      if (IDAndValue == null) {
-        return 0
-      } else {
-        var value: Double = 0
-        val num = IDAndValue(0).size - 1
-        for (i <- 1 to num) {
-          value += IDAndValue(0).getDouble(i)
-        }
-        return value./(num)
-      }
+    // ========================================
+
+    // =================== 将读取hbase，将rdd转换为dataframe ===================
+    def hisdataYXToDF(tablename: String) {
+      // 定义Hbase的配置
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
+      conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
+        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
+        classOf[org.apache.hadoop.hbase.client.Result])
+        .map(_._2)
+        .map(result => {
+          val str = Bytes.toString(result.getRow)
+          Row(str.replaceAll("[0-9]", ""), str.replaceAll("[^0-9]", "").takeRight(14), str.replaceAll("[^0-9]", "").dropRight(14),Bytes.toString(result.getValue("c".getBytes, "value".getBytes)))
+        })
+      // 以编程的方式指定 Schema，将RDD转化为DataFrame
+      val schema = StructType(StructField("abbreviation", StringType, true) ::
+        StructField("time", StringType, true) ::
+        StructField("id", StringType, true) ::
+        StructField("value", StringType, true) :: Nil)
+      spark.createDataFrame(tableRDD, schema).filter($"time" > lastDay || $"time" <= endTime).createTempView(tablename)
     }
+    // ========================================
+
+    // =================== 查询所需历史数据数据的方法 ===================
     // 根据type查询对应表controlID数据
     def selectByType(typeAndID: Array[Row]): Array[Row] = {
       if (typeAndID == null) {
@@ -551,7 +608,46 @@ object TestOnMySQL {
         result.take(stations_count)
       }
     }
+    // ========================================
 
+    // =================== 赋值各个数据的方法 ===================
+    // 获取运行状态
+    def assign_runStatus(IDAndValue: Array[Row]): Double = {
+      // TODO
+      if (IDAndValue == null) {
+        return 0
+      } else {
+        return 1
+      }
+    }
+    // 获取累计消耗电量
+    def assign_powerConsumption(IDAndValue: Array[Row]): Double = {
+      var sumPower: Double = 0
+      if (IDAndValue == null || IDAndValue.length == 1) {
+        return sumPower
+      } else {
+        for (i <- 1 to IDAndValue(0).size - 1) {
+          sumPower += Math.abs((IDAndValue(0).getDouble(i) - IDAndValue(1).getDouble(i)))
+        }
+        return sumPower
+      }
+    }
+    // 平均值数据(瞬时流量，进出水温度，温度，频率)
+    def assign_instant(IDAndValue: Array[Row]): Double = {
+      if (IDAndValue == null) {
+        return 0
+      } else {
+        var value: Double = 0
+        val num = IDAndValue(0).size - 1
+        for (i <- 1 to num) {
+          value += IDAndValue(0).getDouble(i)
+        }
+        return value./(num)
+      }
+    }
+    // ========================================
+
+    // =================== 根据历史数据计算指标的方法 ===================
     // 计算二级指标的瞬时指标
     def getIndicatorTwo(): Double = {
       return (water_specificHeat.*(water_density).*(water_yield).*(water_OT - water_IT).*(run_time))./(216000000.*(consumption))
@@ -580,24 +676,12 @@ object TestOnMySQL {
     def getIndicatorPower(): Double = {
       return consumption./(area.*(24))
     }
-
-    /*
-    //写入MySQL
-    val userRDD = spark.sparkContext.parallelize(Array("13 jack 666888 27", "24 wade 999999 50")).map(x => x.split(" "))
-    val ROWRDD = userRDD.map(x => Row(x(0).toInt, x(1).trim, x(2).trim, x(3).toInt))
-    ROWRDD.foreach(print)
-    //设置模式信息
-    val schema = StructType(List(StructField("id", IntegerType, true), StructField("name", StringType, true), StructField("password", StringType, true), StructField("age", IntegerType, true)))
-
-    val userDF = spark.createDataFrame(ROWRDD, schema)
-
-    val parameter = new Properties()
-    parameter.put("user", "****")
-    parameter.put("password", "****")
-    parameter.put("driver", "com.mysql.jdbc.Driver")
-    userDF.write.mode("append").jdbc("jdbc:mysql://localhost:3306/my_test_db01", table, parameter)
-    df.show()
-    */
+    // ========================================
 
   }
+
+  def convertScanToString(scan: Scan) = {
+    Base64.encodeBytes(ProtobufUtil.toScan(scan).toByteArray)
+  }
+
 }
