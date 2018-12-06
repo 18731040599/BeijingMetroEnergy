@@ -36,6 +36,10 @@ object FileToHbase {
         return false
       }
     })
+    
+    if(files.length == 0){
+      return
+    }
 
     // 创建SparkSession
     val spark = SparkSession
