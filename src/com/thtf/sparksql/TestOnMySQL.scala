@@ -7,23 +7,16 @@ import java.text.SimpleDateFormat
 import java.io.{ FileInputStream, File }
 import org.apache.spark.SparkConf
 import org.apache.hadoop.hbase.HBaseConfiguration
-import org.apache.hadoop.hbase.mapreduce.TableInputFormat
 import org.apache.hadoop.hbase.util.{ Base64, Bytes }
 import org.apache.hadoop.hbase.client._
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil
 import org.apache.hadoop.hbase.filter._
+import org.apache.hadoop.mapred.JobConf
+import org.apache.hadoop.hbase.mapred.TableOutputFormat
+import org.apache.hadoop.hbase.mapreduce.TableInputFormat
+import org.apache.hadoop.hbase.io.ImmutableBytesWritable
+import scala.collection.mutable.ArrayBuffer
 
-case class KPI(
-  Time: String,
-  d1: Double,
-  d2: Double,
-  d3: Double,
-  d4: Double,
-  d5: Double,
-  d10: Double,
-  d15: Double,
-  d20: Double,
-  d24: Double)
 object TestOnMySQL {
   def main(args: Array[String]): Unit = {
 
@@ -152,9 +145,17 @@ object TestOnMySQL {
     val point = "point"
     val center = "center"
     val line = "line"
-
+    // 历史数据表名
     val hisdataYC = "hisdataYC"
     val hisdataYX = "hisdataYX"
+    // 状态记录表名
+    val hisstatus = "hisstatus"
+    // KPI表名
+    val KPI_real = "KPI_real"
+    val KPI_day = "KPI_day"
+
+    // KPI表的字段名
+    val KPI_fields = ArrayBuffer[String]("abbreviation", "time", "d1", "d2", "d3", "d4", "d5", "d10", "d15", "d20", "d24")
 
     // 表的字段名
     val center_fields = "lineName abbreviation projectName description eneryMgr".split(" ")
@@ -185,7 +186,7 @@ object TestOnMySQL {
           row
         })
       // 以编程的方式指定 Schema，将RDD转化为DataFrame
-      val fields = tables.getOrElse(point, null).map(field => StructField(field, StringType, nullable = true))
+      val fields = tables.getOrElse(tablename, null).map(field => StructField(field, StringType, nullable = true))
       spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
     }
     // ========================================
@@ -214,8 +215,8 @@ object TestOnMySQL {
       // 以编程的方式指定 Schema，将RDD转化为DataFrame
       val fields = (-2 to 599).toArray.map(field => StructField(field.toString(), StringType, nullable = true))
       fields(0) = StructField("abbreviation".toString(), StringType, nullable = true)
-      fields(1) = StructField("TIME".toString(), StringType, nullable = true)
-      spark.createDataFrame(tableRDD, StructType(fields))
+      fields(1) = StructField("time".toString(), StringType, nullable = true)
+      spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
     }
     // ========================================
 
@@ -241,20 +242,83 @@ object TestOnMySQL {
         StructField("id", StringType, true) ::
         StructField("value", StringType, true) :: Nil)
       spark.createDataFrame(tableRDD, schema).filter($"time" > lastDay && $"time" <= endTime).createTempView(tablename)
+      // SELECT t1.* FROM `hisdata` t1 ,(SELECT MAX(TIME) AS mt,abbr,id FROM `hisdata` GROUP BY abbr,id) t2 WHERE t1.id=t2.id AND t1.time =t2.mt AND t1.abbr=t2.abbr;
       spark.sql(s"SELECT data.* FROM `${tablename}` data ,(SELECT MAX(time) AS mt,abbreviation,id FROM `${tablename}` GROUP BY abbreviation,id) t WHERE data.id=t.id AND data.time =t.mt AND data.abbreviation=t.abbreviation").createOrReplaceTempView(tablename)
     }
     // ========================================
 
+    // =================== 将读取hbase，将rdd转换为dataframe ===================
+    def hisdataKPIToDF(tablename: String) {
+      val fields = KPI_fields.clone()
+      fields.remove(2)
+      // 定义Hbase的配置
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
+      conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
+        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
+        classOf[org.apache.hadoop.hbase.client.Result])
+        .map(_._2)
+        .map(result => {
+          var row = Row(Bytes.toString(result.getRow).dropRight(14), Bytes.toString(result.getRow).takeRight(14))
+          for (i <- 0 until result.size()) {
+            row = Row.merge(row, Row(Bytes.toString(result.getValue("c".getBytes, fields(i + 2).getBytes))))
+          }
+          row
+        })
+      // 以编程的方式指定 Schema，将RDD转化为DataFrame
+      val schema = fields.map(field => StructField(field, StringType, nullable = true))
+      spark.createDataFrame(tableRDD, StructType(schema)).filter($"time" > lastDay && $"time" < endTime).createTempView(tablename)
+    }
+    // ========================================
+
+    // =================== 将dataframe保存到hbase表 ===================
+    def saveToHbase(tablename: String, KPI: ArrayBuffer[Array[String]]) {
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      // 定义jobconf的配置
+      val jobConf = new JobConf(conf, this.getClass)
+      jobConf.setOutputFormat(classOf[TableOutputFormat])
+      jobConf.set(TableOutputFormat.OUTPUT_TABLE, tablename)
+
+      val KPIRdd_real = spark.sparkContext.parallelize(KPI).map(arr => {
+        val p = new Put(Bytes.toBytes(arr(0)))
+        val startnum = KPI_fields.length - (arr.length - 1)
+        for (i <- 0 until arr.length - 1) {
+          p.addColumn(Bytes.toBytes("c"), Bytes.toBytes(KPI_fields(i + startnum)), Bytes.toBytes(arr(i + 1)))
+        }
+        (new ImmutableBytesWritable, p)
+      })
+      KPIRdd_real.saveAsHadoopDataset(jobConf)
+    }
+    // ========================================
+
+    // 创建各个表临时视图
+    hisdataYCToDF(hisdataYC)
+    if (spark.sql(s"select * from ${hisdataYC}").count() == 0) {
+      // 如果没有历史数据，直接结束程序
+      println("There's no historical data!")
+      return
+    }
+    hisdataYXToDF(hisdataYX)
     finalHtableToDF(center)
     finalHtableToDF(point)
     finalHtableToDF(line)
-    hisdataYCToDF(hisdataYC)
-    hisdataYXToDF(hisdataYX)
+    hisdataKPIToDF(KPI_real)
+    hisdataKPIToDF(hisstatus)
+
+    // 创建存放KPI的可变数组
+    val KPIs_real: ArrayBuffer[Array[String]] = null
+    val KPIs_day: ArrayBuffer[Array[String]] = null
+    val KPIs_status: ArrayBuffer[Array[String]] = null
 
     // 查询线路
     //val center_records = null
     val lines_df = spark.sql(s"SELECT lineName,abbreviation FROM `${center}` WHERE eneryMgr=1")
-    if (lines_df == null) {
+    if (lines_df.count() == 0) {
       return
     }
     val lines = lines_df.collect()
@@ -264,12 +328,13 @@ object TestOnMySQL {
       line_abbr = lines(i).getString(1)
       // 查询车站
       val stations_df = spark.sql(s"SELECT stationName,abbreviation FROM `${line}` WHERE lineName='${lineName}' AND eneryMgr=1")
-      if (stations_df == null) {
+      if (stations_df.count() == 0) {
         return
       }
       val stations = stations_df.collect()
       // 遍历车站
       for (i <- 0 to (stations.length - 1)) {
+        // kpi瞬时指标分数
         var d1: Double = 0
         var d2: Double = 0
         var d3: Double = 0
@@ -279,10 +344,22 @@ object TestOnMySQL {
         var d15: Double = 0
         var d20: Double = 0
         var d24: Double = 0
+        // 有效开机记录
+        var d2_status: Double = 0
+        var d3_status: Double = 0
+        var d4_status: Double = 0
+        var d5_status: Double = 0
+        var d10_status: Double = 0
+        var d15_status: Double = 0
+        var d20_status: Double = 0
+        var d24_status: Double = 0
+
         stationName = stations(i).getString(0)
         station_abbr = stations(i).getString(1)
-        println(spark.sql(s"select * from ${hisdataYC}").count())
-        println(spark.sql(s"select * from ${hisdataYX}").count())
+
+        val sum_KPI = spark.sql(s"SELECT SUM(d2),SUM(d3),SUM(d4),SUM(d5),SUM(d10),SUM(d15),SUM(d20),SUM(d24) FROM `${KPI_real}` WHERE abbreviation='${station_abbr}'").collect()
+        val sum_status = spark.sql(s"SELECT SUM(d2),SUM(d3),SUM(d4),SUM(d5),SUM(d10),SUM(d15),SUM(d20),SUM(d24) FROM `${hisstatus}` WHERE abbreviation='${station_abbr}'").collect()
+
         // 计算各项指标
         // 电耗d1
         area = spark.sql(s"SELECT area FROM `${line}` WHERE lineName='${lineName}' AND stationName='${stationName}'").take(1)(0).get(0).asInstanceOf[Double]
@@ -320,6 +397,9 @@ object TestOnMySQL {
         } else {
           run_status = 1
         }
+        d2_status = run_status + getKPIDay(sum_status, 0)
+        d3_status = run_status + getKPIDay(sum_status, 1)
+        d24_status = run_status + getKPIDay(sum_status, 7)
         if (run_status == 0) {
           d2 = 0
           d3 = 0
@@ -386,14 +466,17 @@ object TestOnMySQL {
         // 室温d4
         if (false) {
           // TODO 非通风时间
+          run_status = 0
           d4 = 0
         } else {
+          run_status = 1
           if (HFT_standard - ZT_T > 6) {
             d4 = 0
           } else {
             d4 = 100 - Math.abs(HFT_standard - ZT_T)./(6).*(100)
           }
         }
+        d4_status = run_status + getKPIDay(sum_status, 2)
         // 赋值冷冻水瞬时流量
         IDs = selectByRegex(LD_yield_Regex)
         IDAndValue = selectYCData(IDs)
@@ -410,6 +493,7 @@ object TestOnMySQL {
         IDs = selectByRegex(LSJZ_Run_Regex)
         IDAndValue = selectYCData(IDs)
         run_status = assign_runStatus(IDAndValue)
+        d5_status = run_status + getKPIDay(sum_status, 3)
         if (run_status == 0) {
           d5 = 0
         } else {
@@ -433,6 +517,7 @@ object TestOnMySQL {
         IDs = selectByRegex(LDB_Run_Regex)
         IDAndValue = selectYCData(IDs)
         run_status = assign_runStatus(IDAndValue)
+        d10_status = run_status + getKPIDay(sum_status, 4)
         if (run_status == 0) {
           d10 = 0
         } else {
@@ -467,6 +552,7 @@ object TestOnMySQL {
         IDs = selectByRegex(LQB_Run_Regex)
         IDAndValue = selectYCData(IDs)
         run_status = assign_runStatus(IDAndValue)
+        d15_status = run_status + getKPIDay(sum_status, 5)
         if (run_status == 0) {
           d15 = 0
         } else {
@@ -490,6 +576,7 @@ object TestOnMySQL {
         IDs = selectByRegex(LT_Run_Regex)
         IDAndValue = selectYCData(IDs)
         run_status = assign_runStatus(IDAndValue)
+        d20_status = run_status + getKPIDay(sum_status, 6)
         if (run_status == 0) {
           d20 = 0
         } else {
@@ -508,19 +595,52 @@ object TestOnMySQL {
             }
           }
         }
-        val kpi_instant = KPI.apply(endTime, d1, d2, d3, d4, d5, d10, d15, d20, d24)
-        println(kpi_instant)
+        KPIs_real += Array(
+          station_abbr + endTime,
+          d2.toString(),
+          d3.toString(),
+          d4.toString(),
+          d5.toString(),
+          d10.toString(),
+          d15.toString(),
+          d20.toString(),
+          d24.toString())
+        KPIs_status += Array(
+          station_abbr + endTime,
+          d2_status.toString(),
+          d3_status.toString(),
+          d4_status.toString(),
+          d5_status.toString(),
+          d10_status.toString(),
+          d15_status.toString(),
+          d20_status.toString(),
+          d24_status.toString())
+        KPIs_day += Array(
+          station_abbr + endTime,
+          d1.toString(),
+          (d2 + getKPIDay(sum_KPI, 0))./(d2_status).toString(),
+          (d3 + getKPIDay(sum_KPI, 1))./(d3_status).toString(),
+          (d4 + getKPIDay(sum_KPI, 2))./(d4_status).toString(),
+          (d5 + getKPIDay(sum_KPI, 3))./(d5_status).toString(),
+          (d10 + getKPIDay(sum_KPI, 4))./(d10_status).toString(),
+          (d15 + getKPIDay(sum_KPI, 5))./(d15_status).toString(),
+          (d20 + getKPIDay(sum_KPI, 6))./(d20_status).toString(),
+          (d24 + getKPIDay(sum_KPI, 7))./(d24_status).toString())
+
         println("Done!")
         return // 测试，直接结束
       }
     }
+    saveToHbase(KPI_real, KPIs_real)
+    saveToHbase(hisstatus, KPIs_status)
+    saveToHbase(KPI_day, KPIs_day)
     println("Done!")
 
     // =================== 查询所需历史数据数据的方法 ===================
     // 根据type查询对应表controlID数据
     def selectYXData(IDs: Array[Row]): Array[Row] = {
-      if (IDs == null) {
-        return null
+      if (IDs.length == 0) {
+        return Array[Row]()
       }
       var YX_IDs = ""
       IDs.map(row => {
@@ -532,8 +652,8 @@ object TestOnMySQL {
     }
     // 根据type查询对应表controlID定存数据
     def selectYCData(IDs: Array[Row]): Array[Row] = {
-      if (IDs == null) {
-        return null
+      if (IDs.length == 0) {
+        return Array[Row]()
       }
       var YC_IDs = ""
       IDs.map(row => {
@@ -545,8 +665,8 @@ object TestOnMySQL {
     }
     // 查询能耗对应表controlID两个时间的定存数据
     def selectConsumptionData(IDs: Array[Row], startTime: String): Array[Row] = {
-      if (IDs == null) {
-        return null
+      if (IDs.length == 0) {
+        return Array[Row]()
       }
       var YC_IDs = ""
       IDs.map(row => {
@@ -558,19 +678,14 @@ object TestOnMySQL {
     }
     // 根据regex查询type和controlID
     def selectByRegex(regex: String): Array[Row] = {
-      val result = spark.sql(s"SELECT type,controlID FROM `${point}` WHERE lineName='${lineName}' AND stationName='${stationName}' AND pointName LIKE '${regex}'")
-      if (result == null) {
-        return null
-      } else {
-        result.collect()
-      }
+      return spark.sql(s"SELECT type,controlID FROM `${point}` WHERE lineName='${lineName}' AND stationName='${stationName}' AND pointName LIKE '${regex}'").collect()
     }
     // ========================================
 
     // =================== 赋值各个数据的方法 ===================
     // 获取运行状态
     def assign_runStatus(IDAndValue: Array[Row]): Double = {
-      if (IDAndValue == null) {
+      if (IDAndValue.length == 0) {
         return 0
       } else {
         // time,id,value
@@ -587,7 +702,7 @@ object TestOnMySQL {
     // 获取累计消耗电量
     def assign_powerConsumption(IDAndValue: Array[Row]): Double = {
       var sumPower: Double = 0
-      if (IDAndValue == null || IDAndValue.length == 1) {
+      if (IDAndValue.length == 0 || IDAndValue.length == 1) {
         return sumPower
       } else {
         for (i <- 1 to IDAndValue(0).size - 1) {
@@ -598,7 +713,7 @@ object TestOnMySQL {
     }
     // 平均值数据(瞬时流量，进出水温度，温度，频率)
     def assign_instant(IDAndValue: Array[Row]): Double = {
-      if (IDAndValue == null) {
+      if (IDAndValue.length == 0) {
         // TODO 如果没有瞬时流量指标，则读取配置文件
         return 0
       } else {
@@ -642,8 +757,18 @@ object TestOnMySQL {
       return consumption./(area.*(24))
     }
     // ========================================
+    // =================== 计算kpi_day和累积运行状态的方法 ===================
+    def getKPIDay(sum: Array[Row], dn: Int): Double = {
+      val value = sum(0).getString(dn)
+      if (value == null) {
+        return 0
+      } else {
+        return value.toDouble
+      }
+    }
+    // ========================================
   }
-  // 将scan配置到conf前先转换为string
+  // 将scan配置的conf前先转换为string
   def convertScanToString(scan: Scan) = {
     Base64.encodeBytes(ProtobufUtil.toScan(scan).toByteArray)
   }
