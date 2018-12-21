@@ -24,43 +24,45 @@ object TestOnMySQL {
 
     // 时间
     val calendar = Calendar.getInstance
+    calendar.add(Calendar.MINUTE, -calendar.get(Calendar.MINUTE) % 20)
     val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
-    //val endTime = simpleDateFormat.format(calendar.getTime)
-    val endTime = "20181010102000"
+    val endTime = simpleDateFormat.format(calendar.getTime)
+    //val endTime = "20171219164000"
     calendar.add(Calendar.MINUTE, -20)
-    //val startTime = simpleDateFormat.format(calendar.getTime)
-    val startTime = "20181010100000"
+    val startTime = simpleDateFormat.format(calendar.getTime)
+    //val startTime = "20171219162000"
     calendar.add(Calendar.MINUTE, -(20 * 71))
-    //val lastDay = simpleDateFormat.format(calendar.getTime)
-    val lastDay = "20181009102000"
+    val lastDay = simpleDateFormat.format(calendar.getTime)
+    //val lastDay = "20171218164000"
 
     // 读取配置文件
-    val properties = new Properties
+    val params = new Properties
     try {
-      properties.load(new FileInputStream(new File("conf/settings.properties")))
+      //params.load(new FileInputStream(new File("conf/params.properties")))
+      params.load(new FileInputStream(new File("params.properties")))
     } catch {
       case t: Throwable => t.printStackTrace() // TODO: handle error
     }
 
     // 常量参数
-    val water_specificHeat: Double = properties.getProperty("water_specificHeat").toDouble
-    val water_density: Double = properties.getProperty("water_density").toDouble
-    val air_specificHeat: Double = properties.getProperty("air_specificHeat").toDouble
-    val air_density: Double = properties.getProperty("air_density").toDouble
+    val water_specificHeat: Double = params.getProperty("water_specificHeat").toDouble
+    val water_density: Double = params.getProperty("water_density").toDouble
+    val air_specificHeat: Double = params.getProperty("air_specificHeat").toDouble
+    val air_density: Double = params.getProperty("air_density").toDouble
     // 设定参数
-    val run_time: Double = properties.getProperty("run_time").toDouble // 系统设置值
-    val KT_F: Double = properties.getProperty("KT_F").toDouble // 系统设定值
-    val HPF_F: Double = properties.getProperty("HPF_F").toDouble // 系统设定值
+    val run_time: Double = params.getProperty("run_time").toDouble // 系统设置值
+    val KT_F: Double = params.getProperty("KT_F").toDouble // 系统设定值
+    val HPF_F: Double = params.getProperty("HPF_F").toDouble // 系统设定值
     // 指标标准
-    val LSJZ_standard: Double = properties.getProperty("LSJZ_standard").toDouble
-    val LD_standard: Double = properties.getProperty("LD_standard").toDouble
-    val LQ_standard: Double = properties.getProperty("LQ_standard").toDouble
-    val LT_standard: Double = properties.getProperty("LT_standard").toDouble
-    val DKT_standard: Double = properties.getProperty("DKT_standard").toDouble
-    val LL_standard: Double = properties.getProperty("LL_standard").toDouble
-    val power_standard: Double = properties.getProperty("power_standard").toDouble
-    val XL_standard: Double = properties.getProperty("XL_standard").toDouble
-    val HFT_standard: Double = properties.getProperty("HFT_standard").toDouble
+    val LSJZ_standard: Double = params.getProperty("LSJZ_standard").toDouble
+    val LD_standard: Double = params.getProperty("LD_standard").toDouble
+    val LQ_standard: Double = params.getProperty("LQ_standard").toDouble
+    val LT_standard: Double = params.getProperty("LT_standard").toDouble
+    val DKT_standard: Double = params.getProperty("DKT_standard").toDouble
+    val LL_standard: Double = params.getProperty("LL_standard").toDouble
+    val power_standard: Double = params.getProperty("power_standard").toDouble
+    val XL_standard: Double = params.getProperty("XL_standard").toDouble
+    val HFT_standard: Double = params.getProperty("HFT_standard").toDouble
 
     // 线路
     var lineName: String = ""
@@ -70,9 +72,6 @@ object TestOnMySQL {
     var station_abbr: String = ""
     // 面积
     var area: Double = 0
-    // 运行状态
-    var run_status: Double = 0
-    var SF_run_status: Double = 0
     // 能耗
     var consumption: Double = 0
     // 累计次数
@@ -135,8 +134,8 @@ object TestOnMySQL {
     val spark = SparkSession
       .builder()
       .appName("Spark SQL basic example")
-      .master("local")
-      .config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
+      //.master("local")
+      //.config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
       .getOrCreate()
     // For implicit conversions like converting RDDs to DataFrames
     import spark.implicits._
@@ -174,19 +173,20 @@ object TestOnMySQL {
       conf.set("hbase.zookeeper.quorum", "stest")
       // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
       conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      val columns = tables.getOrElse(tablename, null)
       val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
         classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
         classOf[org.apache.hadoop.hbase.client.Result])
         .map(_._2)
         .map(result => {
-          var row = Row(Bytes.toString(result.getRow))
-          for (i <- 1 to result.size()) {
-            row = Row.merge(row, Row(Bytes.toString(result.getValue("c".getBytes, tables.getOrElse(tablename, null)(i).getBytes))))
+          var row = Row()
+          for (i <- 0 until columns.length) {
+            row = Row.merge(row, Row(Bytes.toString(result.getValue("c".getBytes, columns(i).getBytes))))
           }
           row
         })
       // 以编程的方式指定 Schema，将RDD转化为DataFrame
-      val fields = tables.getOrElse(tablename, null).map(field => StructField(field, StringType, nullable = true))
+      val fields = columns.map(field => StructField(field, StringType, nullable = true))
       spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
     }
     // ========================================
@@ -207,8 +207,13 @@ object TestOnMySQL {
         .map(_._2)
         .map(result => {
           var row = Row(Bytes.toString(result.getRow).dropRight(14), Bytes.toString(result.getRow).takeRight(14))
-          for (i <- 0 to result.size() - 1) {
-            row = Row.merge(row, Row(Bytes.toString(result.getValue("c".getBytes, i.toString().getBytes))))
+          for (i <- 0 to 599) {
+            val value = Bytes.toString(result.getValue("c".getBytes, i.toString().getBytes))
+            if (value == null) {
+              row = Row.merge(row, Row("0"))
+            } else {
+              row = Row.merge(row, Row(value))
+            }
           }
           row
         })
@@ -298,7 +303,7 @@ object TestOnMySQL {
 
     // 创建各个表临时视图
     hisdataYCToDF(hisdataYC)
-    if (spark.sql(s"select * from ${hisdataYC}").count() == 0) {
+    if (spark.sql(s"select COUNT(*) from ${hisdataYC}").collect()(0).getLong(0) == 0) {
       // 如果没有历史数据，直接结束程序
       println("There's no historical data!")
       return
@@ -311,9 +316,9 @@ object TestOnMySQL {
     hisdataKPIToDF(hisstatus)
 
     // 创建存放KPI的可变数组
-    val KPIs_real: ArrayBuffer[Array[String]] = null
-    val KPIs_day: ArrayBuffer[Array[String]] = null
-    val KPIs_status: ArrayBuffer[Array[String]] = null
+    val KPIs_real: ArrayBuffer[Array[String]] = ArrayBuffer[Array[String]]()
+    val KPIs_day: ArrayBuffer[Array[String]] = ArrayBuffer[Array[String]]()
+    val KPIs_status: ArrayBuffer[Array[String]] = ArrayBuffer[Array[String]]()
 
     // 查询线路
     //val center_records = null
@@ -334,6 +339,8 @@ object TestOnMySQL {
       val stations = stations_df.collect()
       // 遍历车站
       for (i <- 0 to (stations.length - 1)) {
+        // 运行状态
+        var SF_run_status: Double = 0
         // kpi瞬时指标分数
         var d1: Double = 0
         var d2: Double = 0
@@ -344,15 +351,24 @@ object TestOnMySQL {
         var d15: Double = 0
         var d20: Double = 0
         var d24: Double = 0
-        // 有效开机记录
-        var d2_status: Double = 0
-        var d3_status: Double = 0
-        var d4_status: Double = 0
-        var d5_status: Double = 0
-        var d10_status: Double = 0
-        var d15_status: Double = 0
-        var d20_status: Double = 0
-        var d24_status: Double = 0
+        // 瞬时运行状态
+        var d2_Status: Double = 0
+        var d3_Status: Double = 0
+        var d4_Status: Double = 0
+        var d5_Status: Double = 0
+        var d10_Status: Double = 0
+        var d15_Status: Double = 0
+        var d20_Status: Double = 0
+        var d24_Status: Double = 0
+        // 累计有效开机记录
+        var d2_sumStatus: Double = 0
+        var d3_sumStatus: Double = 0
+        var d4_sumStatus: Double = 0
+        var d5_sumStatus: Double = 0
+        var d10_sumStatus: Double = 0
+        var d15_sumStatus: Double = 0
+        var d20_sumStatus: Double = 0
+        var d24_sumStatus: Double = 0
 
         stationName = stations(i).getString(0)
         station_abbr = stations(i).getString(1)
@@ -362,13 +378,13 @@ object TestOnMySQL {
 
         // 计算各项指标
         // 电耗d1
-        area = spark.sql(s"SELECT area FROM `${line}` WHERE lineName='${lineName}' AND stationName='${stationName}'").take(1)(0).get(0).asInstanceOf[Double]
+        area = spark.sql(s"SELECT area FROM `${line}` WHERE lineName='${lineName}' AND stationName='${stationName}'").take(1)(0).getString(0).toDouble
         // 赋值24小时总能耗
         var IDs = selectByRegex(ALL_ZNDB_Regex)
         var IDAndValue = selectConsumptionData(IDs, lastDay)
         consumption = assign_powerConsumption(IDAndValue)
         var result = getIndicatorPower()
-        if (power_standard > result) {
+        if (power_standard > result || result == 0) {
           d1 = 100
         } else {
           d1 = 100 - (result - power_standard)./(result).*(100)
@@ -393,14 +409,18 @@ object TestOnMySQL {
           // 获取排风机运行状态
           IDs = selectByRegex(HPF_Run_Regex)
           IDAndValue = selectYCData(IDs)
-          run_status = assign_runStatus(IDAndValue)
+          d2_Status = assign_runStatus(IDAndValue)
+          d3_Status = d2_Status
+          d24_Status = d2_Status
         } else {
-          run_status = 1
+          d2_Status = 1
+          d3_Status = 1
+          d24_Status = 1
         }
-        d2_status = run_status + getKPIDay(sum_status, 0)
-        d3_status = run_status + getKPIDay(sum_status, 1)
-        d24_status = run_status + getKPIDay(sum_status, 7)
-        if (run_status == 0) {
+        d2_sumStatus = d2_Status + getKPIDay(sum_status, 0)
+        d3_sumStatus = d3_Status + getKPIDay(sum_status, 1)
+        d24_sumStatus = d24_Status + getKPIDay(sum_status, 7)
+        if (d2_Status == 0) {
           d2 = 0
           d3 = 0
           d24 = 0
@@ -428,9 +448,9 @@ object TestOnMySQL {
           XF_T = assign_instant(IDAndValue)
           // 效率d2
           if (consumption == 0) {
-            d2 = 0
+            d2 = 100
           } else {
-            result = getIndicatorLL()./(consumption.*(3))
+            result = getIndicatorLL(SF_run_status)./(consumption.*(3))
             if (result > XL_standard) {
               d2 = 100
             } else {
@@ -438,7 +458,7 @@ object TestOnMySQL {
             }
           }
           // 冷量d3
-          result = getIndicatorLL()
+          result = getIndicatorLL(SF_run_status)
           if (result > LL_standard) {
             d3 = LL_standard./(result).*(100)
           } else {
@@ -455,7 +475,7 @@ object TestOnMySQL {
           if (consumption == 0) {
             d24 = 0
           } else {
-            result = getIndicatorKT()
+            result = getIndicatorKT(SF_run_status)
             if (result > DKT_standard) {
               d24 = 100
             } else {
@@ -466,17 +486,17 @@ object TestOnMySQL {
         // 室温d4
         if (false) {
           // TODO 非通风时间
-          run_status = 0
+          d4_Status = 0
           d4 = 0
         } else {
-          run_status = 1
+          d4_Status = 1
           if (HFT_standard - ZT_T > 6) {
             d4 = 0
           } else {
             d4 = 100 - Math.abs(HFT_standard - ZT_T)./(6).*(100)
           }
         }
-        d4_status = run_status + getKPIDay(sum_status, 2)
+        d4_sumStatus = d4_Status + getKPIDay(sum_status, 2)
         // 赋值冷冻水瞬时流量
         IDs = selectByRegex(LD_yield_Regex)
         IDAndValue = selectYCData(IDs)
@@ -492,9 +512,9 @@ object TestOnMySQL {
         // 赋值冷机运行状态
         IDs = selectByRegex(LSJZ_Run_Regex)
         IDAndValue = selectYCData(IDs)
-        run_status = assign_runStatus(IDAndValue)
-        d5_status = run_status + getKPIDay(sum_status, 3)
-        if (run_status == 0) {
+        d5_Status = assign_runStatus(IDAndValue)
+        d5_sumStatus = d5_Status + getKPIDay(sum_status, 3)
+        if (d5_Status == 0) {
           d5 = 0
         } else {
           // 赋值20分钟冷机能耗
@@ -516,9 +536,9 @@ object TestOnMySQL {
         // 赋值冷冻泵运行状态
         IDs = selectByRegex(LDB_Run_Regex)
         IDAndValue = selectYCData(IDs)
-        run_status = assign_runStatus(IDAndValue)
-        d10_status = run_status + getKPIDay(sum_status, 4)
-        if (run_status == 0) {
+        d10_Status = assign_runStatus(IDAndValue)
+        d10_sumStatus = d10_Status + getKPIDay(sum_status, 4)
+        if (d10_Status == 0) {
           d10 = 0
         } else {
           // 赋值20分钟冷冻泵能耗
@@ -551,9 +571,9 @@ object TestOnMySQL {
         // 赋值冷却泵运行状态
         IDs = selectByRegex(LQB_Run_Regex)
         IDAndValue = selectYCData(IDs)
-        run_status = assign_runStatus(IDAndValue)
-        d15_status = run_status + getKPIDay(sum_status, 5)
-        if (run_status == 0) {
+        d15_Status = assign_runStatus(IDAndValue)
+        d15_sumStatus = d15_Status + getKPIDay(sum_status, 5)
+        if (d15_Status == 0) {
           d15 = 0
         } else {
           // 赋值20分钟冷却泵能耗
@@ -575,9 +595,9 @@ object TestOnMySQL {
         // 赋值冷冻塔运行状态
         IDs = selectByRegex(LT_Run_Regex)
         IDAndValue = selectYCData(IDs)
-        run_status = assign_runStatus(IDAndValue)
-        d20_status = run_status + getKPIDay(sum_status, 6)
-        if (run_status == 0) {
+        d20_Status = assign_runStatus(IDAndValue)
+        d20_sumStatus = d20_Status + getKPIDay(sum_status, 6)
+        if (d20_Status == 0) {
           d20 = 0
         } else {
           // 赋值20分钟冷冻塔能耗
@@ -607,28 +627,61 @@ object TestOnMySQL {
           d24.toString())
         KPIs_status += Array(
           station_abbr + endTime,
-          d2_status.toString(),
-          d3_status.toString(),
-          d4_status.toString(),
-          d5_status.toString(),
-          d10_status.toString(),
-          d15_status.toString(),
-          d20_status.toString(),
-          d24_status.toString())
+          d2_Status.toString(),
+          d3_Status.toString(),
+          d4_Status.toString(),
+          d5_Status.toString(),
+          d10_Status.toString(),
+          d15_Status.toString(),
+          d20_Status.toString(),
+          d24_Status.toString())
         KPIs_day += Array(
           station_abbr + endTime,
           d1.toString(),
-          (d2 + getKPIDay(sum_KPI, 0))./(d2_status).toString(),
-          (d3 + getKPIDay(sum_KPI, 1))./(d3_status).toString(),
-          (d4 + getKPIDay(sum_KPI, 2))./(d4_status).toString(),
-          (d5 + getKPIDay(sum_KPI, 3))./(d5_status).toString(),
-          (d10 + getKPIDay(sum_KPI, 4))./(d10_status).toString(),
-          (d15 + getKPIDay(sum_KPI, 5))./(d15_status).toString(),
-          (d20 + getKPIDay(sum_KPI, 6))./(d20_status).toString(),
-          (d24 + getKPIDay(sum_KPI, 7))./(d24_status).toString())
+          if (d2_sumStatus == 0) {
+            //"-",一类设备未开启，则其相应的指标得分上位显示“—”
+            "0"
+          } else {
+            (d2 + getKPIDay(sum_KPI, 0))./(d2_sumStatus).toString()
+          },
+          if (d3_sumStatus == 0) {
+            "0"
+          } else {
+            (d3 + getKPIDay(sum_KPI, 1))./(d3_sumStatus).toString()
+          },
+          if (d4_sumStatus == 0) {
+            "0"
+          } else {
+            (d4 + getKPIDay(sum_KPI, 2))./(d4_sumStatus).toString()
+          },
+          if (d5_sumStatus == 0) {
+            "0"
+          } else {
+            (d5 + getKPIDay(sum_KPI, 3))./(d5_sumStatus).toString()
+          },
+          if (d10_sumStatus == 0) {
+            "0"
+          } else {
+            (d10 + getKPIDay(sum_KPI, 4))./(d10_sumStatus).toString()
+          },
+          if (d15_sumStatus == 0) {
+            "0"
+          } else {
+            (d15 + getKPIDay(sum_KPI, 5))./(d15_sumStatus).toString()
+          },
+          if (d20_sumStatus == 0) {
+            "0"
+          } else {
+            (d20 + getKPIDay(sum_KPI, 6))./(d20_sumStatus).toString()
+          },
+          if (d24_sumStatus == 0) {
+            "0"
+          } else {
+            (d24 + getKPIDay(sum_KPI, 7))./(d24_sumStatus).toString()
+          })
 
-        println("Done!")
-        return // 测试，直接结束
+        //println("Done!")
+        //return // 测试，直接结束
       }
     }
     saveToHbase(KPI_real, KPIs_real)
@@ -706,7 +759,15 @@ object TestOnMySQL {
         return sumPower
       } else {
         for (i <- 1 to IDAndValue(0).size - 1) {
-          sumPower += (IDAndValue(1).get(i).asInstanceOf[Double] - IDAndValue(0).get(i).asInstanceOf[Double])
+          var v1 = 0d
+          var v0 = 0d
+          if (IDAndValue(1).getString(i) != "\\N") {
+            v1 = IDAndValue(1).getString(i).toDouble
+          }
+          if (IDAndValue(0).getString(i) != "\\N") {
+            v0 = IDAndValue(0).getString(i).toDouble
+          }
+          sumPower += (v1 - v0)
         }
         return sumPower
       }
@@ -720,7 +781,11 @@ object TestOnMySQL {
         var value: Double = 0
         val num = IDAndValue(0).size - 1
         for (i <- 1 to num) {
-          value += IDAndValue(0).get(i).asInstanceOf[Double]
+          var v = 0d
+          if (IDAndValue(0).getString(i) != "\\N") {
+            v = IDAndValue(0).getString(i).toDouble
+          }
+          value += v
         }
         return value./(num)
       }
@@ -737,7 +802,7 @@ object TestOnMySQL {
       return (KT_Hz./(50).*(KT_F)) + (HPF_Hz./(50).*(HPF_F))
     }
     // 计算二级指标大系统通风的瞬时指标
-    def getIndicatorKT(): Double = {
+    def getIndicatorKT(SF_run_status: Double): Double = {
       if (SF_run_status == 0) {
         return (air_specificHeat.*(air_density).*(air_yield).*(ZT_T - XF_T).*(run_time))./(216000000.*(consumption))
       } else {
@@ -745,7 +810,7 @@ object TestOnMySQL {
       }
     }
     // 计算一级指标冷量,效率的瞬时指标
-    def getIndicatorLL(): Double = {
+    def getIndicatorLL(SF_run_status: Double): Double = {
       if (SF_run_status == 0) {
         return (air_specificHeat.*(air_density).*(air_yield).*(ZT_T - XF_T))./(3600000)
       } else {
@@ -759,11 +824,10 @@ object TestOnMySQL {
     // ========================================
     // =================== 计算kpi_day和累积运行状态的方法 ===================
     def getKPIDay(sum: Array[Row], dn: Int): Double = {
-      val value = sum(0).getString(dn)
-      if (value == null) {
+      if (sum(0).get(dn) == null) {
         return 0
       } else {
-        return value.toDouble
+        return sum(0).getDouble(dn)
       }
     }
     // ========================================

@@ -9,9 +9,8 @@ import org.apache.hadoop.hbase.util.Bytes
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import scala.util.Random
 import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.io.File
-import java.io.FilenameFilter
+import java.util.{ Calendar, Properties }
+import java.io.{ File, FilenameFilter, FileInputStream }
 
 /**
  * 将txt类型的文件中的数据存到hbase表中
@@ -23,11 +22,28 @@ object FileToHbase {
 
     // 时间
     val calendar = Calendar.getInstance
+    calendar.add(Calendar.MINUTE, -calendar.get(Calendar.MINUTE)%20)
     val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
-    //val endTime = simpleDateFormat.format(calendar.getTime)
-    val endTime = "20180810002000"
+    val endTime = simpleDateFormat.format(calendar.getTime)
+    //val endTime = "20180810002000"
 
-    val file = new File("F:/java/mysql")
+    // 读取配置文件
+    val properties = new Properties
+    try {
+      properties.load(new FileInputStream(new File("defaults.properties")))
+    } catch {
+      case t: Throwable => t.printStackTrace() // TODO: handle error
+    }
+    // /opt/modules/test/data/
+    // F:/java/mysql/
+    var filepath = "/opt/modules/test/data/"
+    if (!filepath.endsWith("/")) {
+      filepath += "/"
+    }
+    val file = new File(filepath)
+    if (!file.isDirectory()) {
+      throw new RuntimeException(filepath + ": No such directory")
+    }
     val files = file.list(new FilenameFilter() {
       def accept(dir: File, name: String): Boolean = {
         if (name.startsWith(endTime)) {
@@ -36,8 +52,9 @@ object FileToHbase {
         return false
       }
     })
-    
-    if(files.length == 0){
+
+    if (files.length == 0) {
+      println("There is no matching file")
       return
     }
 
@@ -45,8 +62,8 @@ object FileToHbase {
     val spark = SparkSession
       .builder()
       .appName("FileToHbase")
-      .master("local")
-      .config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
+      //.master("local")
+      //.config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
       .getOrCreate()
 
     import spark.implicits._
@@ -80,30 +97,40 @@ object FileToHbase {
     jobConf.setOutputFormat(classOf[TableOutputFormat])
 
     // 方案二：全部存String类型的数据
+    filepath = "file://" + filepath
     for (f <- files) {
       val fs = f.split("_")
       if (fs.length == 2) {
         jobConf.set(TableOutputFormat.OUTPUT_TABLE, fs(1).dropRight(4))
         // 读取文件转化为RDD
         val sc = spark.sparkContext
-        val rdd = sc.textFile(s"F:/java/mysql/${f}").map(line => {
+        val rdd = sc.textFile(filepath + f).map(line => {
           line.split("\t")
         })
-        var id = 0
-        val resultRdd = rdd.map(row => {
-          val p = new Put(Bytes.toBytes(id))
-          id += 1
-          for (i <- 0 to row.length - 1) {
-            p.addColumn(Bytes.toBytes("c"), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
-          }
-          (new ImmutableBytesWritable, p)
-        })
-        resultRdd.saveAsHadoopDataset(jobConf)
+        if (fs(1).dropRight(4) == "point") {
+          val resultRdd = rdd.map(row => {
+            val p = new Put(Bytes.toBytes(row(1) + row(3) + row(4)))
+            for (i <- 0 to row.length - 1) {
+              p.addColumn(Bytes.toBytes("c"), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
+            }
+            (new ImmutableBytesWritable, p)
+          })
+          resultRdd.saveAsHadoopDataset(jobConf)
+        } else {
+          val resultRdd = rdd.map(row => {
+            val p = new Put(Bytes.toBytes(row(1)))
+            for (i <- 0 to row.length - 1) {
+              p.addColumn(Bytes.toBytes("c"), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
+            }
+            (new ImmutableBytesWritable, p)
+          })
+          resultRdd.saveAsHadoopDataset(jobConf)
+        }
       } else if (fs.length == 4) {
         jobConf.set(TableOutputFormat.OUTPUT_TABLE, "hisdataYX")
         // 读取文件转化为RDD
         val sc = spark.sparkContext
-        val rdd = sc.textFile(s"F:/java/mysql/${f}").map(line => {
+        val rdd = sc.textFile(filepath + f).map(line => {
           line.split("\t")
         })
         val resultRdd = rdd.map(row => {
@@ -116,7 +143,7 @@ object FileToHbase {
         jobConf.set(TableOutputFormat.OUTPUT_TABLE, "hisdataYC")
         // 读取文件转化为RDD
         val sc = spark.sparkContext
-        val rdd = sc.textFile(s"F:/java/mysql/${f}").map(line => {
+        val rdd = sc.textFile(filepath + f).map(line => {
           line.split("\t")
         })
         val resultRdd = rdd.map(row => {

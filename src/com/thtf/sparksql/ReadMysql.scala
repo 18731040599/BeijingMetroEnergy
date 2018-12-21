@@ -38,10 +38,18 @@ object ReadMysql {
     val uer_df = reader.load()
     uer_df.createOrReplaceTempView("user")
     spark.sql("select * from user where age > 26").show()
+    println("like语句")
+    spark.sql("select * from user where name like '___'").show()
+    spark.sql("select * from user where name like '_\\__'").show()
     
     reader.option("dbtable", teacher)
-    val teacher_df = reader.load()
-    teacher_df.show()
+    val teacher_df = reader.load().createTempView(teacher)
+    println("sum = ")
+    println(spark.sql("select sum(TID) from teacher").take(1)(0).getString(0))    
+    println(spark.sql("select sum(TID) from teacher").take(1)(0).getString(0) == null)    
+    println(spark.sql("select sum(TID) from teacher").take(1)(0).getString(0) == "null")    
+    println(spark.sql("select COUNT(*) from teacher").collect()(0).getLong(0) == 0)    
+    
     spark.sql("""select * from user 
                     where age > 20""").foreach(row => {
       val line = row.toString()
@@ -64,6 +72,9 @@ object ReadMysql {
     println(YC_ids)
     //println(YC_ids.dropRight(1))
     println(YC_ids.replaceAll("`", ""))
+    
+    
+    
     //println(spark.sql("select * from user where age > 100").take(1)(0).get(0))
     
     //println("修改临时表")
