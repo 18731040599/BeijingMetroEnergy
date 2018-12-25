@@ -64,33 +64,6 @@ object TestOnMySQL {
     val XL_standard: Double = params.getProperty("XL_standard").toDouble
     val HFT_standard: Double = params.getProperty("HFT_standard").toDouble
 
-    // 线路
-    var lineName: String = ""
-    var line_abbr: String = ""
-    // 车站
-    var stationName: String = ""
-    var station_abbr: String = ""
-    // 面积
-    var area: Double = 0
-    // 能耗
-    var consumption: Double = 0
-    // 累计次数
-    var cumulative_number: Double = 0
-    // 冷水
-    var water_yield: Double = 0
-    var water_IT: Double = 0
-    var water_OT: Double = 0
-    // 风量
-    var air_yield: Double = 0
-    // 频率
-    var KT_Hz: Double = 0
-    var HPF_Hz: Double = 0
-    // 温度
-    var HF_T: Double = 0
-    var SF_T: Double = 0
-    var XF_T: Double = 0
-    var ZT_T: Double = 0
-
     // =================== regex ===================
     // 冷水机组
     val LSJZ_Run_Regex = "LSJZ___i%Run_St"
@@ -329,8 +302,8 @@ object TestOnMySQL {
     val lines = lines_df.collect()
     // 遍历线路
     for (i <- 0 to (lines.length - 1)) {
-      lineName = lines(i).getString(0)
-      line_abbr = lines(i).getString(1)
+      val lineName = lines(i).getString(0)
+      val line_abbr = lines(i).getString(1)
       // 查询车站
       val stations_df = spark.sql(s"SELECT stationName,abbreviation FROM `${line}` WHERE lineName='${lineName}' AND eneryMgr=1")
       if (stations_df.count() == 0) {
@@ -370,45 +343,45 @@ object TestOnMySQL {
         var d20_sumStatus: Double = 0
         var d24_sumStatus: Double = 0
 
-        stationName = stations(i).getString(0)
-        station_abbr = stations(i).getString(1)
+        val stationName = stations(i).getString(0)
+        val station_abbr = stations(i).getString(1)
 
         val sum_KPI = spark.sql(s"SELECT SUM(d2),SUM(d3),SUM(d4),SUM(d5),SUM(d10),SUM(d15),SUM(d20),SUM(d24) FROM `${KPI_real}` WHERE abbreviation='${station_abbr}'").collect()
         val sum_status = spark.sql(s"SELECT SUM(d2),SUM(d3),SUM(d4),SUM(d5),SUM(d10),SUM(d15),SUM(d20),SUM(d24) FROM `${hisstatus}` WHERE abbreviation='${station_abbr}'").collect()
 
         // 计算各项指标
         // 电耗d1
-        area = spark.sql(s"SELECT area FROM `${line}` WHERE lineName='${lineName}' AND stationName='${stationName}'").take(1)(0).getString(0).toDouble
+        val area = spark.sql(s"SELECT area FROM `${line}` WHERE lineName='${lineName}' AND stationName='${stationName}'").take(1)(0).getString(0).toDouble
         // 赋值24小时总能耗
-        var IDs = selectByRegex(ALL_ZNDB_Regex)
-        var IDAndValue = selectConsumptionData(IDs, lastDay)
-        consumption = assign_powerConsumption(IDAndValue)
-        var result = getIndicatorPower()
+        var IDs = selectByRegex(ALL_ZNDB_Regex, lineName, stationName)
+        var IDAndValue = selectConsumptionData(IDs, lastDay, station_abbr)
+        var consumption = assign_powerConsumption(IDAndValue)
+        var result = getIndicatorPower(consumption, area)
         if (power_standard > result || result == 0) {
           d1 = 100
         } else {
           d1 = 100 - (result - power_standard)./(result).*(100)
         }
         // 赋值回风温度
-        IDs = selectByRegex(HF_T_Regex)
-        IDAndValue = selectYCData(IDs)
-        HF_T = assign_instant(IDAndValue)
+        IDs = selectByRegex(HF_T_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
+        var HF_T = assign_instant(IDAndValue)
         // 赋值室内温度
-        IDs = selectByRegex(ZTX_T_Regex)
-        IDAndValue = selectYCData(IDs)
-        ZT_T = assign_instant(IDAndValue)
-        IDs = selectByRegex(ZTS_T_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(ZTX_T_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
+        var ZT_T = assign_instant(IDAndValue)
+        IDs = selectByRegex(ZTS_T_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
         ZT_T = (ZT_T + assign_instant(IDAndValue))./(2)
         // 赋值送风机运行状态
-        IDs = selectByRegex(KT_Run_Regex)
-        IDAndValue = selectYXData(IDs)
+        IDs = selectByRegex(KT_Run_Regex, lineName, stationName)
+        IDAndValue = selectYXData(IDs, station_abbr)
         SF_run_status = assign_runStatus(IDAndValue)
         // 赋值运行状态
         if (SF_run_status == 0) {
           // 获取排风机运行状态
-          IDs = selectByRegex(HPF_Run_Regex)
-          IDAndValue = selectYCData(IDs)
+          IDs = selectByRegex(HPF_Run_Regex, lineName, stationName)
+          IDAndValue = selectYXData(IDs, station_abbr)
           d2_Status = assign_runStatus(IDAndValue)
           d3_Status = d2_Status
           d24_Status = d2_Status
@@ -426,31 +399,31 @@ object TestOnMySQL {
           d24 = 0
         } else {
           // 重新赋值20分钟总能耗
-          IDAndValue = selectConsumptionData(IDs, startTime)
+          IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
           consumption = assign_powerConsumption(IDAndValue)
           // 赋值送风机频率
-          IDs = selectByRegex(KT_Hz_Regex)
-          IDAndValue = selectYCData(IDs)
-          KT_Hz = assign_instant(IDAndValue)
+          IDs = selectByRegex(KT_Hz_Regex, lineName, stationName)
+          IDAndValue = selectYCData(IDs, station_abbr)
+          var KT_Hz = assign_instant(IDAndValue)
           // 赋值回排风机频率
-          IDs = selectByRegex(HPF_Hz_Regex)
-          IDAndValue = selectYCData(IDs)
-          HPF_Hz = assign_instant(IDAndValue)
+          IDs = selectByRegex(HPF_Hz_Regex, lineName, stationName)
+          IDAndValue = selectYCData(IDs, station_abbr)
+          var HPF_Hz = assign_instant(IDAndValue)
           // 赋值进风量
-          air_yield = getAirYield()
+          var air_yield = getAirYield(HPF_Hz, KT_Hz)
           // 赋值送风温度
-          IDs = selectByRegex(SF_T_Regex)
-          IDAndValue = selectYCData(IDs)
-          SF_T = assign_instant(IDAndValue)
+          IDs = selectByRegex(SF_T_Regex, lineName, stationName)
+          IDAndValue = selectYCData(IDs, station_abbr)
+          var SF_T = assign_instant(IDAndValue)
           // 赋值新风温度
-          IDs = selectByRegex(XF_T_Regex)
-          IDAndValue = selectYCData(IDs)
-          XF_T = assign_instant(IDAndValue)
+          IDs = selectByRegex(XF_T_Regex, lineName, stationName)
+          IDAndValue = selectYCData(IDs, station_abbr)
+          var XF_T = assign_instant(IDAndValue)
           // 效率d2
           if (consumption == 0) {
             d2 = 100
           } else {
-            result = getIndicatorLL(SF_run_status)./(consumption.*(3))
+            result = getIndicatorLL(SF_run_status, air_yield, ZT_T, XF_T, SF_T)./(consumption.*(3))
             if (result > XL_standard) {
               d2 = 100
             } else {
@@ -458,24 +431,24 @@ object TestOnMySQL {
             }
           }
           // 冷量d3
-          result = getIndicatorLL(SF_run_status)
+          result = getIndicatorLL(SF_run_status, air_yield, ZT_T, XF_T, SF_T)
           if (result > LL_standard) {
             d3 = LL_standard./(result).*(100)
           } else {
             d3 = 100
           }
           // 重新赋值20分钟风机能耗
-          IDs = selectByRegex(KT_ZNDB_Regex)
-          IDAndValue = selectConsumptionData(IDs, startTime)
+          IDs = selectByRegex(KT_ZNDB_Regex, lineName, stationName)
+          IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
           consumption = assign_powerConsumption(IDAndValue)
-          IDs = selectByRegex(HPF_ZNDB_Regex)
-          IDAndValue = selectConsumptionData(IDs, startTime)
+          IDs = selectByRegex(HPF_ZNDB_Regex, lineName, stationName)
+          IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
           consumption = consumption + assign_powerConsumption(IDAndValue)
           // 大系统通风d24
           if (consumption == 0) {
             d24 = 0
           } else {
-            result = getIndicatorKT(SF_run_status)
+            result = getIndicatorKT(SF_run_status, consumption, air_yield, ZT_T, XF_T, SF_T)
             if (result > DKT_standard) {
               d24 = 100
             } else {
@@ -498,33 +471,33 @@ object TestOnMySQL {
         }
         d4_sumStatus = d4_Status + getKPIDay(sum_status, 2)
         // 赋值冷冻水瞬时流量
-        IDs = selectByRegex(LD_yield_Regex)
-        IDAndValue = selectYCData(IDs)
-        water_yield = assign_instant(IDAndValue)
+        IDs = selectByRegex(LD_yield_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
+        var water_yield = assign_instant(IDAndValue)
         // 赋值冷冻水的供、回水温度
-        IDs = selectByRegex(LD_IT_Regex)
-        IDAndValue = selectYCData(IDs)
-        water_IT = assign_instant(IDAndValue)
-        IDs = selectByRegex(LD_OT_Regex)
-        IDAndValue = selectYCData(IDs)
-        water_OT = assign_instant(IDAndValue)
+        IDs = selectByRegex(LD_IT_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
+        var water_IT = assign_instant(IDAndValue)
+        IDs = selectByRegex(LD_OT_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
+        var water_OT = assign_instant(IDAndValue)
         // 冷机d5
         // 赋值冷机运行状态
-        IDs = selectByRegex(LSJZ_Run_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(LSJZ_Run_Regex, lineName, stationName)
+        IDAndValue = selectYXData(IDs, station_abbr)
         d5_Status = assign_runStatus(IDAndValue)
         d5_sumStatus = d5_Status + getKPIDay(sum_status, 3)
         if (d5_Status == 0) {
           d5 = 0
         } else {
           // 赋值20分钟冷机能耗
-          IDs = selectByRegex(LSJZ_ZNDB_Regex)
-          IDAndValue = selectConsumptionData(IDs, startTime)
+          IDs = selectByRegex(LSJZ_ZNDB_Regex, lineName, stationName)
+          IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
           consumption = assign_powerConsumption(IDAndValue)
           if (consumption == 0) {
             d5 = 0
           } else {
-            result = getIndicatorTwo()
+            result = getIndicatorTwo(consumption, water_yield, water_OT, water_IT)
             if (result > LSJZ_standard) {
               d5 = 100
             } else {
@@ -534,21 +507,21 @@ object TestOnMySQL {
         }
         // 冷冻泵d10
         // 赋值冷冻泵运行状态
-        IDs = selectByRegex(LDB_Run_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(LDB_Run_Regex, lineName, stationName)
+        IDAndValue = selectYXData(IDs, station_abbr)
         d10_Status = assign_runStatus(IDAndValue)
         d10_sumStatus = d10_Status + getKPIDay(sum_status, 4)
         if (d10_Status == 0) {
           d10 = 0
         } else {
           // 赋值20分钟冷冻泵能耗
-          IDs = selectByRegex(LDB_ZNDB_Regex)
-          IDAndValue = selectConsumptionData(IDs, startTime)
+          IDs = selectByRegex(LDB_ZNDB_Regex, lineName, stationName)
+          IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
           consumption = assign_powerConsumption(IDAndValue)
           if (consumption == 0) {
             d10 = 0
           } else {
-            result = getIndicatorTwo()
+            result = getIndicatorTwo(consumption, water_yield, water_OT, water_IT)
             if (result > LD_standard) {
               d10 = 100
             } else {
@@ -557,33 +530,33 @@ object TestOnMySQL {
           }
         }
         // 赋值冷却水瞬时流量
-        IDs = selectByRegex(LQ_yield_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(LQ_yield_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
         water_yield = assign_instant(IDAndValue)
         // 赋值冷却水的供、回水温度
-        IDs = selectByRegex(LQ_IT_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(LQ_IT_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
         water_IT = assign_instant(IDAndValue)
-        IDs = selectByRegex(LQ_OT_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(LQ_OT_Regex, lineName, stationName)
+        IDAndValue = selectYCData(IDs, station_abbr)
         water_OT = assign_instant(IDAndValue)
         // 冷却泵d15
         // 赋值冷却泵运行状态
-        IDs = selectByRegex(LQB_Run_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(LQB_Run_Regex, lineName, stationName)
+        IDAndValue = selectYXData(IDs, station_abbr)
         d15_Status = assign_runStatus(IDAndValue)
         d15_sumStatus = d15_Status + getKPIDay(sum_status, 5)
         if (d15_Status == 0) {
           d15 = 0
         } else {
           // 赋值20分钟冷却泵能耗
-          IDs = selectByRegex(LQB_ZNDB_Regex)
-          IDAndValue = selectConsumptionData(IDs, startTime)
+          IDs = selectByRegex(LQB_ZNDB_Regex, lineName, stationName)
+          IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
           consumption = assign_powerConsumption(IDAndValue)
           if (consumption == 0) {
             d15 = 0
           } else {
-            result = getIndicatorTwo()
+            result = getIndicatorTwo(consumption, water_yield, water_OT, water_IT)
             if (result > LQ_standard) {
               d15 = 100
             } else {
@@ -593,21 +566,21 @@ object TestOnMySQL {
         }
         // 冷冻塔d20
         // 赋值冷冻塔运行状态
-        IDs = selectByRegex(LT_Run_Regex)
-        IDAndValue = selectYCData(IDs)
+        IDs = selectByRegex(LT_Run_Regex, lineName, stationName)
+        IDAndValue = selectYXData(IDs, station_abbr)
         d20_Status = assign_runStatus(IDAndValue)
         d20_sumStatus = d20_Status + getKPIDay(sum_status, 6)
         if (d20_Status == 0) {
           d20 = 0
         } else {
           // 赋值20分钟冷冻塔能耗
-          IDs = selectByRegex(LT_ZNDB_Regex)
-          IDAndValue = selectConsumptionData(IDs, startTime)
+          IDs = selectByRegex(LT_ZNDB_Regex, lineName, stationName)
+          IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
           consumption = assign_powerConsumption(IDAndValue)
           if (consumption == 0) {
             d20 = 0
           } else {
-            result = getIndicatorTwo()
+            result = getIndicatorTwo(consumption, water_yield, water_OT, water_IT)
             if (result > LT_standard) {
               d20 = 100
             } else {
@@ -691,7 +664,7 @@ object TestOnMySQL {
 
     // =================== 查询所需历史数据数据的方法 ===================
     // 根据type查询对应表controlID数据
-    def selectYXData(IDs: Array[Row]): Array[Row] = {
+    def selectYXData(IDs: Array[Row], station_abbr: String): Array[Row] = {
       if (IDs.length == 0) {
         return Array[Row]()
       }
@@ -704,7 +677,7 @@ object TestOnMySQL {
       return spark.sql(s"SELECT time,id,value FROM `${hisdataYX}` WHERE abbreviation = '${station_abbr}' AND id IN (${YX_IDs})").collect()
     }
     // 根据type查询对应表controlID定存数据
-    def selectYCData(IDs: Array[Row]): Array[Row] = {
+    def selectYCData(IDs: Array[Row], station_abbr: String): Array[Row] = {
       if (IDs.length == 0) {
         return Array[Row]()
       }
@@ -717,7 +690,7 @@ object TestOnMySQL {
       return spark.sql(s"SELECT TIME,${YC_IDs} FROM `${hisdataYC}` WHERE abbreviation = '${station_abbr}' AND time = '${endTime}'").collect()
     }
     // 查询能耗对应表controlID两个时间的定存数据
-    def selectConsumptionData(IDs: Array[Row], startTime: String): Array[Row] = {
+    def selectConsumptionData(IDs: Array[Row], startTime: String, station_abbr: String): Array[Row] = {
       if (IDs.length == 0) {
         return Array[Row]()
       }
@@ -730,7 +703,7 @@ object TestOnMySQL {
       return spark.sql(s"SELECT time,${YC_IDs} FROM `${hisdataYC}` WHERE abbreviation = '${station_abbr}' AND time IN ('${startTime}','${endTime}')").collect()
     }
     // 根据regex查询type和controlID
-    def selectByRegex(regex: String): Array[Row] = {
+    def selectByRegex(regex: String, lineName: String, stationName: String): Array[Row] = {
       return spark.sql(s"SELECT type,controlID FROM `${point}` WHERE lineName='${lineName}' AND stationName='${stationName}' AND pointName LIKE '${regex}'").collect()
     }
     // ========================================
@@ -794,15 +767,15 @@ object TestOnMySQL {
 
     // =================== 根据历史数据计算指标的方法 ===================
     // 计算二级指标的瞬时指标
-    def getIndicatorTwo(): Double = {
+    def getIndicatorTwo(consumption: Double, water_yield: Double, water_OT: Double, water_IT: Double): Double = {
       return (water_specificHeat.*(water_density).*(water_yield).*(water_OT - water_IT).*(run_time))./(216000000.*(consumption))
     }
     // 计算进风量
-    def getAirYield(): Double = {
+    def getAirYield(HPF_Hz: Double, KT_Hz: Double): Double = {
       return (KT_Hz./(50).*(KT_F)) + (HPF_Hz./(50).*(HPF_F))
     }
     // 计算二级指标大系统通风的瞬时指标
-    def getIndicatorKT(SF_run_status: Double): Double = {
+    def getIndicatorKT(SF_run_status: Double, consumption: Double, air_yield: Double, ZT_T: Double, XF_T: Double, SF_T: Double): Double = {
       if (SF_run_status == 0) {
         return (air_specificHeat.*(air_density).*(air_yield).*(ZT_T - XF_T).*(run_time))./(216000000.*(consumption))
       } else {
@@ -810,7 +783,7 @@ object TestOnMySQL {
       }
     }
     // 计算一级指标冷量,效率的瞬时指标
-    def getIndicatorLL(SF_run_status: Double): Double = {
+    def getIndicatorLL(SF_run_status: Double, air_yield: Double, ZT_T: Double, XF_T: Double, SF_T: Double): Double = {
       if (SF_run_status == 0) {
         return (air_specificHeat.*(air_density).*(air_yield).*(ZT_T - XF_T))./(3600000)
       } else {
@@ -818,7 +791,7 @@ object TestOnMySQL {
       }
     }
     // 计算一级指标电耗的瞬时指标
-    def getIndicatorPower(): Double = {
+    def getIndicatorPower(consumption: Double, area: Double): Double = {
       return consumption./(area.*(24))
     }
     // ========================================
