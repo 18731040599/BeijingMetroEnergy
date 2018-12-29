@@ -13,6 +13,8 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.SparkSession
 import org.apache.hadoop.hbase.filter._
 import scala.collection.mutable.ArrayBuffer
+import org.apache.hadoop.yarn.webapp.hamlet.HamletSpec._TableCol
+import org.apache.spark.sql.ColumnName
 
 /**
  * Spark 读取和写入 HBase
@@ -46,18 +48,17 @@ object SparkOnHbase {
       "center" -> center_fields,
       "line" -> line_fields,
       "point" -> point_fields)
-      
+
     // KPI表的字段名
     val KPI_fields = ArrayBuffer[String]("abbreviation", "time", "d1", "d2", "d3", "d4", "d5", "d10", "d15", "d20", "d24")
-    
+
     // 时间
-    val endTime = "20171220100000"
-    val startTime = "2017122094000"
-    val lastDay = "20171219100000"
-    
-    
+    val endTime = "20171228094000"
+    val startTime = "20171228092000"
+    val lastDay = "20171227094000"
+
     // =================== 将读取hbase，将rdd转换为dataframe ===================
-    def hisdataKPIToDF(tablename: String) {
+    def hisdataKPIToDF(tablename: String) = {
       val fields = KPI_fields.clone()
       fields.remove(2)
       // 定义Hbase的配置
@@ -79,10 +80,89 @@ object SparkOnHbase {
         })
       // 以编程的方式指定 Schema，将RDD转化为DataFrame
       val schema = fields.map(field => StructField(field, StringType, nullable = true))
-      spark.createDataFrame(tableRDD, StructType(schema)).filter($"time" > lastDay && $"time" < endTime).createTempView(tablename)
+      spark.createDataFrame(tableRDD, StructType(schema)).filter($"time" > lastDay && $"time" <= endTime)
     }
     // ========================================
-    
+
+    def finalHtableToDF(tablename: String) {
+      // 定义Hbase的配置
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
+      conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      val columns = tables.getOrElse(tablename, null)
+      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
+        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
+        classOf[org.apache.hadoop.hbase.client.Result])
+        .map(_._2)
+        .map(result => {
+          var row = Row()
+          for (i <- 0 until columns.length) {
+            val value = Bytes.toString(result.getValue("c".getBytes, columns(i).getBytes))
+          }
+          row
+        })
+      // 以编程的方式指定 Schema，将RDD转化为DataFrame
+      val fields = columns.map(field => StructField(field, StringType, nullable = true))
+      spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
+    }
+
+    def hisdataYCToDF(tablename: String) = {
+      // 定义Hbase的配置
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
+      conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      //                                                                                  ".*(20171212104000|20171213102000|20171213104000){1}"
+      val filter = new RowFilter(CompareFilter.CompareOp.EQUAL, new RegexStringComparator(s".*(${lastDay}|${startTime}|${endTime}){1}"))
+      conf.set(TableInputFormat.SCAN, convertScanToString(new Scan().setFilter(filter)))
+      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
+        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
+        classOf[org.apache.hadoop.hbase.client.Result])
+        .map(_._2)
+        .map(result => {
+          var row = Row(Bytes.toString(result.getRow).dropRight(14), Bytes.toString(result.getRow).takeRight(14))
+          for (i <- 0 to 599) {
+            val value = Bytes.toString(result.getValue("c".getBytes, i.toString().getBytes))
+            if (value == null) {
+              row = Row.merge(row, Row("0"))
+            } else {
+              row = Row.merge(row, Row(value))
+            }
+          }
+          row
+        })
+      // 以编程的方式指定 Schema，将RDD转化为DataFrame
+      val fields = (-2 to 599).toArray.map(field => StructField(field.toString(), StringType, nullable = true))
+      fields(0) = StructField("abbreviation".toString(), StringType, nullable = true)
+      fields(1) = StructField("time".toString(), StringType, nullable = true)
+      spark.createDataFrame(tableRDD, StructType(fields))
+    }
+
+    def hisdataYXToDF(tablename: String) = {
+      val conf = HBaseConfiguration.create()
+      conf.set("hbase.zookeeper.property.clientPort", "2181")
+      conf.set("hbase.zookeeper.quorum", "stest")
+      //直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
+      conf.set(TableInputFormat.INPUT_TABLE, tablename)
+      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
+        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
+        classOf[org.apache.hadoop.hbase.client.Result])
+        .map(_._2)
+        .map(result => {
+          val str = Bytes.toString(result.getRow)
+          Row(str.replaceAll("[0-9]", ""), str.replaceAll("[^0-9]", "").takeRight(14), str.replaceAll("[^0-9]", "").dropRight(14), Bytes.toString(result.getValue("c".getBytes, "value".getBytes)))
+        })
+      // 以编程的方式指定 Schema，将RDD转化为DataFrame
+      val schema = StructType(StructField("abbreviation", StringType, true) ::
+        StructField("time", StringType, true) ::
+        StructField("id", StringType, true) ::
+        StructField("value", StringType, true) :: Nil)
+      spark.createDataFrame(tableRDD, schema).filter($"time" > lastDay && $"time" <= endTime)
+    }
+
     // ======Load RDD from HBase========
     // use `newAPIHadoopRDD` to load RDD from HBase
     //直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
@@ -153,12 +233,26 @@ object SparkOnHbase {
     val row1 = spark.sql("select * from newuser where age > 26").take(2)(0).getString(0)
     println(row1.toInt)
 	*/
-    val name = "KPI_real"
-    //hisdataYCToDF(name)
+    //val name = "hisdataYC"
+    //val YC = hisdataYCToDF("hisdataYC")
+    //val YX = hisdataYXToDF("hisdataYX")
     //finalHtableToDF(name)
-    hisdataKPIToDF(name)
+    val real = hisdataKPIToDF("KPI_real")
+    val status = hisdataKPIToDF("hisstatus")
     println("-----------------------")
-    spark.sql(s"select * from ${name} where abbreviation == 'slgynm'").show()
+    //YC.show()
+    //YX.show()
+    real.filter($"abbreviation" === "slgynm")show()
+    status.filter($"abbreviation" === "slgynm").show
+    
+    //val arr = Array($"20",$"30")
+    //val arr = Array(new ColumnName("20"),new ColumnName("30"))
+    //DF.select("20","30").show()
+    //DF.select(arr: _*).show()
+    // DF.filter($"id".isin(Array(80, 304): _*)).show()
+    // DF.filter($"value" === 1).select("id").show()
+
+    //spark.sql(s"select * from ${name} where abbreviation == 'slgynm'").show()
     //println(spark.sql(s"select `448`,`455` from ${name} where abbreviation == 'bdz'").take(1)(0).toString())
     //println(spark.sql(s"select `448`,`455` from ${name} where abbreviation == 'bdz'").take(1)(0).get(0) == null)
     //println(spark.sql(s"select `448`,`455` from ${name} where abbreviation == 'bdz'").take(1)(0).get(0) == "\\N")
@@ -181,7 +275,6 @@ object SparkOnHbase {
     //hisdataYXToDF("hisdataYX")
     //spark.sql("select * from hisdataYX").show()
     //spark.sql("SELECT o.* FROM `hisdataYX` o ,(SELECT MAX(TIME) AS mt,id FROM `hisdataYX` GROUP BY id) t WHERE o.id=t.id AND o.time =t.mt").show()
-    
 
     //val count = usersRDD.count()
     //println("Users RDD Count:" + count)
@@ -214,88 +307,6 @@ object SparkOnHbase {
       fields(1) = StructField("time".toString(), StringType, nullable = true)
       spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
     }*/
-    
-    def finalHtableToDF(tablename: String) {
-      // 定义Hbase的配置
-      val conf = HBaseConfiguration.create()
-      conf.set("hbase.zookeeper.property.clientPort", "2181")
-      conf.set("hbase.zookeeper.quorum", "stest")
-      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
-      conf.set(TableInputFormat.INPUT_TABLE, tablename)
-      val columns = tables.getOrElse(tablename, null)
-      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
-        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
-        classOf[org.apache.hadoop.hbase.client.Result])
-        .map(_._2)
-        .map(result => {
-        	var row = Row()
-          for (i <- 0 until columns.length) {
-            val value = Bytes.toString(result.getValue("c".getBytes, columns(i).getBytes))
-          }
-          row
-        })
-      // 以编程的方式指定 Schema，将RDD转化为DataFrame
-      val fields = columns.map(field => StructField(field, StringType, nullable = true))
-      spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
-    }
-    
-    def hisdataYCToDF(tablename: String) = {
-      // 定义Hbase的配置
-      val conf = HBaseConfiguration.create()
-      conf.set("hbase.zookeeper.property.clientPort", "2181")
-      conf.set("hbase.zookeeper.quorum", "stest")
-      // 直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
-      conf.set(TableInputFormat.INPUT_TABLE, tablename)
-      //                                                                                  ".*(20171212104000|20171213102000|20171213104000){1}"
-      val filter = new RowFilter(CompareFilter.CompareOp.EQUAL, new RegexStringComparator(s".*(${lastDay}|${startTime}|${endTime}){1}"))
-      conf.set(TableInputFormat.SCAN, convertScanToString(new Scan().setFilter(filter)))
-      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
-        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
-        classOf[org.apache.hadoop.hbase.client.Result])
-        .map(_._2)
-        .map(result => {
-          var row = Row(Bytes.toString(result.getRow).dropRight(14), Bytes.toString(result.getRow).takeRight(14))
-          for (i <- 0 to 599) {
-            val value = Bytes.toString(result.getValue("c".getBytes, i.toString().getBytes))
-            if(value == null){
-            	row = Row.merge(row, Row("0"))
-            }else{
-            	row = Row.merge(row, Row(value))
-            }
-          }
-          row
-        })
-      // 以编程的方式指定 Schema，将RDD转化为DataFrame
-      val fields = (-2 to 599).toArray.map(field => StructField(field.toString(), StringType, nullable = true))
-      fields(0) = StructField("abbreviation".toString(), StringType, nullable = true)
-      fields(1) = StructField("time".toString(), StringType, nullable = true)
-      spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
-    }
-
-    def hisdataYXToDF(tablename: String) {
-      val conf = HBaseConfiguration.create()
-      conf.set("hbase.zookeeper.property.clientPort", "2181")
-      conf.set("hbase.zookeeper.quorum", "stest")
-      //直接从 HBase 中读取数据并转成 Spark 能直接操作的 RDD[K,V]
-      conf.set(TableInputFormat.INPUT_TABLE, tablename)
-      val tableRDD = spark.sparkContext.newAPIHadoopRDD(conf, classOf[TableInputFormat],
-        classOf[org.apache.hadoop.hbase.io.ImmutableBytesWritable],
-        classOf[org.apache.hadoop.hbase.client.Result])
-        .map(_._2)
-        .map(result => {
-          val str = Bytes.toString(result.getRow)
-          Row(str.replaceAll("[0-9]", ""), str.replaceAll("[^0-9]", "").takeRight(14), str.replaceAll("[^0-9]", "").dropRight(14),Bytes.toString(result.getValue("c".getBytes, "value".getBytes)))
-        })
-      // 以编程的方式指定 Schema，将RDD转化为DataFrame
-      val schema = StructType(StructField("abbreviation", StringType, true) ::
-        StructField("time", StringType, true) ::
-        StructField("id", StringType, true) ::
-        StructField("value", StringType, true) :: Nil)
-      spark.createDataFrame(tableRDD, schema).filter($"time" > "20180810000000" && $"time" <= "20180810002000").createTempView(tablename)
-    }
-    
-    
-    
 
   }
 }
