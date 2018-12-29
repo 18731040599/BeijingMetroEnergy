@@ -22,7 +22,7 @@ object FileToHbase {
 
     // 时间
     val calendar = Calendar.getInstance
-    calendar.add(Calendar.MINUTE, -calendar.get(Calendar.MINUTE)%20)
+    calendar.add(Calendar.MINUTE, -calendar.get(Calendar.MINUTE) % 20)
     val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
     val endTime = simpleDateFormat.format(calendar.getTime)
     //val endTime = "20180810002000"
@@ -98,7 +98,7 @@ object FileToHbase {
 
     // 方案二：全部存String类型的数据
     filepath = "file://" + filepath
-    for (f <- files) {
+    files.foreach(f => {
       val fs = f.split("_")
       if (fs.length == 2) {
         jobConf.set(TableOutputFormat.OUTPUT_TABLE, fs(1).dropRight(4))
@@ -156,7 +156,7 @@ object FileToHbase {
         })
         resultRdd.saveAsHadoopDataset(jobConf)
       }
-    }
+    })
 
     /*
     // 方案一：存入对应类型的数据
