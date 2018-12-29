@@ -219,7 +219,7 @@ object TestOnMySQL {
         StructField("time", StringType, true) ::
         StructField("id", StringType, true) ::
         StructField("value", StringType, true) :: Nil)
-      spark.createDataFrame(tableRDD, schema).filter($"time" > lastDay && $"time" <= endTime).createTempView(tablename)
+      spark.createDataFrame(tableRDD, schema).filter($"time" > lastDay && $"time" < endTime).createTempView(tablename)
       // SELECT t1.* FROM `hisdata` t1 ,(SELECT MAX(TIME) AS mt,abbr,id FROM `hisdata` GROUP BY abbr,id) t2 WHERE t1.id=t2.id AND t1.time =t2.mt AND t1.abbr=t2.abbr;
       spark.sql(s"SELECT data.* FROM `${tablename}` data ,(SELECT MAX(time) AS mt,abbreviation,id FROM `${tablename}` GROUP BY abbreviation,id) t WHERE data.id=t.id AND data.time =t.mt AND data.abbreviation=t.abbreviation").createOrReplaceTempView(tablename)
     }
@@ -716,9 +716,7 @@ object TestOnMySQL {
       } else {
         // time,id,value
         for (row <- IDAndValue) {
-          if (row.getString(0) == endTime && row.getString(2) == "0") {
-            return 1
-          } else if (row.getString(0) != endTime && row.getString(2) == "1") {
+          if (row.getString(2) == "1") {
             return 1
           }
         }
