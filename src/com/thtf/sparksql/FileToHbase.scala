@@ -11,6 +11,7 @@ import scala.util.Random
 import java.text.SimpleDateFormat
 import java.util.{ Calendar, Properties }
 import java.io.{ File, FilenameFilter, FileInputStream }
+import com.thtf.entity.DateEntity
 
 /**
  * 将txt类型的文件中的数据存到hbase表中
@@ -18,21 +19,15 @@ import java.io.{ File, FilenameFilter, FileInputStream }
 object FileToHbase {
   def main(args: Array[String]): Unit = {
 
-    println("Start!")
-
     // 时间
-    val calendar = Calendar.getInstance
-    calendar.add(Calendar.MINUTE, -calendar.get(Calendar.MINUTE) % 20)
-    val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
-    val endTime = simpleDateFormat.format(calendar.getTime)
-    //val endTime = "20180810002000"
+    val endTime = new DateEntity().getCurrentTime
 
     // 读取配置文件
     val properties = new Properties
     try {
       properties.load(new FileInputStream(new File("defaults.properties")))
     } catch {
-      case t: Throwable => t.printStackTrace() // TODO: handle error
+      case t: Throwable => t.printStackTrace()
     }
     // /opt/modules/test/data/
     // F:/java/mysql/

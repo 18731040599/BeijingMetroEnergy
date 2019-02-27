@@ -121,6 +121,21 @@
 
 	<build>
 		<sourceDirectory>src</sourceDirectory>
+		<!-- 打包目标目录下的资源文件 -->
+		<resources>
+            <resource>
+                <directory>conf</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/keystore</directory>
+                <targetPath>keystore</targetPath>
+                <filtering>false</filtering>
+                <includes>
+                    <include>**/*.jks</include>
+                </includes>
+            </resource>
+		</resources>
+		
 		<plugins>
 			<plugin>
 				<artifactId>maven-compiler-plugin</artifactId>

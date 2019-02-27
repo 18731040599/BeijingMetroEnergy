@@ -18,27 +18,19 @@ import org.apache.hadoop.hbase.io.ImmutableBytesWritable
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.api.java.function.FilterFunction
 import org.apache.spark.sql.ColumnName
+import org.slf4j.LoggerFactory
+import com.thtf.entity.DateEntity
 
 object ProcessingHisdata {
   def main(args: Array[String]): Unit = {
-
-    println("Start!")
+    
+    val logger = LoggerFactory.getLogger(ProcessingHisdata.getClass)
 
     // 时间
-    val calendar = Calendar.getInstance
-    calendar.add(Calendar.MINUTE, -calendar.get(Calendar.MINUTE) % 20)
-    val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
-    //val endTime = simpleDateFormat.format(calendar.getTime)
-    // 20180209104000
-    // 20180304112000
-    val endTime = args(0)
-    calendar.add(Calendar.MINUTE, -20)
-    //val startTime = simpleDateFormat.format(calendar.getTime)
-    val startTime = args(1)
-    calendar.add(Calendar.MINUTE, -(20 * 71))
-    //val lastDay = simpleDateFormat.format(calendar.getTime)
-    val lastDay = args(2)
-    args.foreach(println)
+    val dateEntity = new DateEntity
+    val endTime = dateEntity.getCurrentTime
+    val startTime = dateEntity.getStartTime
+    val lastDay = dateEntity.getYesterday
 
     // 读取配置文件
     val params = new Properties
@@ -47,6 +39,7 @@ object ProcessingHisdata {
       params.load(new FileInputStream(new File("params.properties")))
     } catch {
       case t: Throwable => t.printStackTrace() // TODO: handle error
+      println("Error reading configuration file!")
     }
 
     // 常量参数
