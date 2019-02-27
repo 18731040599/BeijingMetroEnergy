@@ -29,19 +29,22 @@ object ProcessingHisdata {
     calendar.add(Calendar.MINUTE, -calendar.get(Calendar.MINUTE) % 20)
     val simpleDateFormat = new SimpleDateFormat("yyyyMMddHHmm00")
     //val endTime = simpleDateFormat.format(calendar.getTime)
-    val endTime = "20171228122000"
+    // 20180209104000
+    // 20180304112000
+    val endTime = args(0)
     calendar.add(Calendar.MINUTE, -20)
     //val startTime = simpleDateFormat.format(calendar.getTime)
-    val startTime = "20171228120000"
+    val startTime = args(1)
     calendar.add(Calendar.MINUTE, -(20 * 71))
     //val lastDay = simpleDateFormat.format(calendar.getTime)
-    val lastDay = "20171227122000"
+    val lastDay = args(2)
+    args.foreach(println)
 
     // 读取配置文件
     val params = new Properties
     try {
-      params.load(new FileInputStream(new File("conf/params.properties")))
-      //params.load(new FileInputStream(new File("params.properties")))
+      //params.load(new FileInputStream(new File("conf/params.properties")))
+      params.load(new FileInputStream(new File("params.properties")))
     } catch {
       case t: Throwable => t.printStackTrace() // TODO: handle error
     }
@@ -109,8 +112,8 @@ object ProcessingHisdata {
     val spark = SparkSession
       .builder()
       .appName("ProcessingHisdata")
-      .master("local")
-      .config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
+      //.master("local")
+      //.config("spark.sql.warehouse.dir", "C:/Users/Wyh/eclipse-workspace/BeijingMetroEnergy/spark-warehouse")
       //.config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
       .getOrCreate()
     // For implicit conversions like converting RDDs to DataFrames
@@ -163,7 +166,7 @@ object ProcessingHisdata {
         })
       // 以编程的方式指定 Schema，将RDD转化为DataFrame
       val fields = columns.map(field => StructField(field, StringType, nullable = true))
-      spark.createDataFrame(tableRDD, StructType(fields))
+      spark.createDataFrame(tableRDD, StructType(fields)).cache()
     }
     // ========================================
 
@@ -197,7 +200,7 @@ object ProcessingHisdata {
       val fields = (-2 to 599).toArray.map(field => StructField(field.toString(), StringType, nullable = true))
       fields(0) = StructField("abbreviation".toString(), StringType, nullable = true)
       fields(1) = StructField("time".toString(), StringType, nullable = true)
-      spark.createDataFrame(tableRDD, StructType(fields))
+      spark.createDataFrame(tableRDD, StructType(fields)).cache()
     }
     // ========================================
 
@@ -225,6 +228,7 @@ object ProcessingHisdata {
       spark.createDataFrame(tableRDD, schema).filter($"time" > lastDay && $"time" < endTime).createTempView(tablename)
       // SELECT t1.* FROM `hisdata` t1 ,(SELECT MAX(TIME) AS mt,abbr,id FROM `hisdata` GROUP BY abbr,id) t2 WHERE t1.id=t2.id AND t1.time =t2.mt AND t1.abbr=t2.abbr;
       spark.sql(s"SELECT data.* FROM `${tablename}` data ,(SELECT MAX(time) AS mt,abbreviation,id FROM `${tablename}` GROUP BY abbreviation,id) t WHERE data.id=t.id AND data.time =t.mt AND data.abbreviation=t.abbreviation")
+           .cache()
     }
     // ========================================
 
@@ -251,7 +255,7 @@ object ProcessingHisdata {
         })
       // 以编程的方式指定 Schema，将RDD转化为DataFrame
       val schema = fields.map(field => StructField(field, StringType, nullable = true))
-      spark.createDataFrame(tableRDD, StructType(schema)).filter($"time" > lastDay && $"time" <= endTime)
+      spark.createDataFrame(tableRDD, StructType(schema)).filter($"time" > lastDay && $"time" <= endTime).cache()
     }
     // ========================================
 
@@ -365,8 +369,14 @@ object ProcessingHisdata {
             val stationName = station.getString(0)
             val station_abbr = station.getString(1)
 
-            val sum_KPI = KPI_real_DF.filter($"abbreviation" === station_abbr).agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum").collect()
-            val sum_status = hisstatus_DF.filter($"abbreviation" === station_abbr).agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum").collect()
+            val sum_KPI = KPI_real_DF.filter($"abbreviation" === station_abbr)
+                                     .agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum")
+                                     .select("sum(d2)", "sum(d3)", "sum(d4)", "sum(d5)", "sum(d10)", "sum(d15)", "sum(d20)", "sum(d24)")
+                                     .collect()
+            val sum_status = hisstatus_DF.filter($"abbreviation" === station_abbr)
+                                         .agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum")
+                                         .select("sum(d2)", "sum(d3)", "sum(d4)", "sum(d5)", "sum(d10)", "sum(d15)", "sum(d20)", "sum(d24)")
+                                         .collect()
 
             // 计算各项指标
             // 电耗d1

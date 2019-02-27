@@ -15,6 +15,8 @@ import org.apache.hadoop.hbase.filter._
 import scala.collection.mutable.ArrayBuffer
 import org.apache.hadoop.yarn.webapp.hamlet.HamletSpec._TableCol
 import org.apache.spark.sql.ColumnName
+import org.apache.spark.sql.SQLContext
+import org.apache.log4j.{ Logger, Level }
 
 /**
  * Spark 读取和写入 HBase
@@ -28,6 +30,8 @@ object SparkOnHbase {
   }
 
   def main(args: Array[String]) {
+    
+    Logger.getLogger("org").setLevel(Level.ERROR)
 
     println("Start!")
 
@@ -53,9 +57,9 @@ object SparkOnHbase {
     val KPI_fields = ArrayBuffer[String]("abbreviation", "time", "d1", "d2", "d3", "d4", "d5", "d10", "d15", "d20", "d24")
 
     // 时间
-    val endTime = "20171228094000"
-    val startTime = "20171228092000"
-    val lastDay = "20171227094000"
+    val endTime = "20180216202000"
+    val startTime = "20180216200000"
+    val lastDay = "20180215202000"
 
     // =================== 将读取hbase，将rdd转换为dataframe ===================
     def hisdataKPIToDF(tablename: String) = {
@@ -84,7 +88,7 @@ object SparkOnHbase {
     }
     // ========================================
 
-    def finalHtableToDF(tablename: String) {
+    def finalHtableToDF(tablename: String) = {
       // 定义Hbase的配置
       val conf = HBaseConfiguration.create()
       conf.set("hbase.zookeeper.property.clientPort", "2181")
@@ -99,13 +103,13 @@ object SparkOnHbase {
         .map(result => {
           var row = Row()
           for (i <- 0 until columns.length) {
-            val value = Bytes.toString(result.getValue("c".getBytes, columns(i).getBytes))
+            row = Row.merge(row, Row(Bytes.toString(result.getValue("c".getBytes, columns(i).getBytes))))
           }
           row
         })
       // 以编程的方式指定 Schema，将RDD转化为DataFrame
       val fields = columns.map(field => StructField(field, StringType, nullable = true))
-      spark.createDataFrame(tableRDD, StructType(fields)).createTempView(tablename)
+      spark.createDataFrame(tableRDD, StructType(fields))
     }
 
     def hisdataYCToDF(tablename: String) = {
@@ -234,16 +238,21 @@ object SparkOnHbase {
     println(row1.toInt)
 	*/
     //val name = "hisdataYC"
-    //val YC = hisdataYCToDF("hisdataYC")
-    //val YX = hisdataYXToDF("hisdataYX")
-    //finalHtableToDF(name)
-    val real = hisdataKPIToDF("KPI_real")
-    val status = hisdataKPIToDF("hisstatus")
+    hisdataYCToDF("hisdataYC").printSchema()
+    hisdataYXToDF("hisdataYX").printSchema()
+    finalHtableToDF("center").printSchema()
+    finalHtableToDF("point").printSchema()
+    finalHtableToDF("line").printSchema()
+    hisdataKPIToDF("KPI_real").printSchema()
+    hisdataKPIToDF("hisstatus").printSchema()
+    // val day = hisdataKPIToDF("KPI_day")
     println("-----------------------")
     //YC.show()
     //YX.show()
-    real.filter($"abbreviation" === "slgynm")show()
-    status.filter($"abbreviation" === "slgynm").show
+    //tatus.filter($"abbreviation" === "slgynm").show
+    // day.filter($"abbreviation" === "slgynm").show
+    //real.filter($"abbreviation" === "slgynm").agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum").select("sum(d2)", "sum(d3)", "sum(d4)", "sum(d5)", "sum(d10)", "sum(d15)", "sum(d20)", "sum(d24)").show
+    // day.filter($"abbreviation" === "slgynm").agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum").show
     
     //val arr = Array($"20",$"30")
     //val arr = Array(new ColumnName("20"),new ColumnName("30"))

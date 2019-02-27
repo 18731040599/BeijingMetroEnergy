@@ -159,6 +159,10 @@ object MyTest {
     println(value == null)
     println(value == "null")
     
+    def m (a :Int) :Int = {
+      return a*2
+    }
+    println(m(2))
     
     
     /*
