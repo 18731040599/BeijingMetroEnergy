@@ -20,11 +20,13 @@ import org.apache.spark.api.java.function.FilterFunction
 import org.apache.spark.sql.ColumnName
 import org.slf4j.LoggerFactory
 import com.thtf.entity.DateEntity
+import com.thtf.entity.RegexEntity
 
 object ProcessingHisdata {
   def main(args: Array[String]): Unit = {
-    
+
     val logger = LoggerFactory.getLogger(ProcessingHisdata.getClass)
+    println("Start!")
 
     // 时间
     val dateEntity = new DateEntity
@@ -32,74 +34,98 @@ object ProcessingHisdata {
     val startTime = dateEntity.getStartTime
     val lastDay = dateEntity.getYesterday
 
-    // 读取配置文件
-    val params = new Properties
+    // 读取默认配置文件
+    val defaults = new Properties
     try {
-      //params.load(new FileInputStream(new File("conf/params.properties")))
-      params.load(new FileInputStream(new File("params.properties")))
+      defaults.load(new FileInputStream(new File("defaults.properties")))
     } catch {
-      case t: Throwable => t.printStackTrace() // TODO: handle error
-      println("Error reading configuration file!")
+      case t: Throwable =>
+        t.printStackTrace()
+        println("Error reading default configuration file!")
+        return
     }
 
-    // 常量参数
-    val water_specificHeat: Double = params.getProperty("water_specificHeat").toDouble
-    val water_density: Double = params.getProperty("water_density").toDouble
-    val air_specificHeat: Double = params.getProperty("air_specificHeat").toDouble
-    val air_density: Double = params.getProperty("air_density").toDouble
-    // 设定参数
-    val run_time: Double = params.getProperty("run_time").toDouble // 系统设置值
-    val KT_F: Double = params.getProperty("KT_F").toDouble // 系统设定值
-    val HPF_F: Double = params.getProperty("HPF_F").toDouble // 系统设定值
-    // 指标标准
-    val LSJZ_standard: Double = params.getProperty("LSJZ_standard").toDouble
-    val LD_standard: Double = params.getProperty("LD_standard").toDouble
-    val LQ_standard: Double = params.getProperty("LQ_standard").toDouble
-    val LT_standard: Double = params.getProperty("LT_standard").toDouble
-    val DKT_standard: Double = params.getProperty("DKT_standard").toDouble
-    val LL_standard: Double = params.getProperty("LL_standard").toDouble
-    val power_standard: Double = params.getProperty("power_standard").toDouble
-    val XL_standard: Double = params.getProperty("XL_standard").toDouble
-    val HFT_standard: Double = params.getProperty("HFT_standard").toDouble
+    // 从外部配置文件中读取需要变更的参数
+    val settings = new Properties
+    try {
+      settings.load(new FileInputStream(new File("settings.properties")))
+    } catch {
+      case t: Throwable =>
+        t.printStackTrace()
+        println("Error reading settings configuration file!")
+    }
 
-    // =================== regex ===================
-    // 冷水机组
-    val LSJZ_Run_Regex = "LSJZ___i%Run_St"
-    val LSJZ_ZNDB_Regex = "ZNDB_LS___Wp_Tm"
-    // 冷冻泵
-    val LDB_Run_Regex = "LDB___i%Run_St"
-    val LDB_ZNDB_Regex = "ZNDB_LD___Wp_Tm"
-    // 冷却泵
-    val LQB_Run_Regex = "LQB___i%Run_St"
-    val LQB_ZNDB_Regex = "ZNDB_LQ___Wp_Tm"
-    // 冷却塔
-    val LT_Run_Regex = "LQT___i%Run_St"
-    val LT_ZNDB_Regex = "ZNDB_LT___Wp_Tm"
-    // 送风机
-    val KT_Run_Regex = "KT____iRun_St"
-    val KT_ZNDB_Regex = "ZNDB_KT____Wp_Tm"
-    val KT_Hz_Regex = "KT____FreqFB_Hz"
-    // 排风机
-    val HPF_Run_Regex = "HPF____iRun_St"
-    val HPF_ZNDB_Regex = "ZNDB_HPF____Wp_Tm"
-    val HPF_Hz_Regex = "HPF____FreqFB_Hz"
-    // 温度
-    val HF_T_Regex = "TH_HFD____Temp_Tm"
-    val SF_T_Regex = "TH_SFD____Temp_Tm"
-    val XF_T_Regex = "TH_SWD____Temp_Tm"
-    val ZTX_T_Regex = "TH_ZTX_____Temp_Tm"
-    val ZTS_T_Regex = "TH_ZTS_____Temp_Tm"
-    // 冷冻水
-    val LD_yield_Regex = "FT_LDD_0__Ft_Tm"
-    val LD_IT_Regex = "TE_LDJD_01_Temp_Tm"
-    val LD_OT_Regex = "TE_LDCD_01_Temp_Tm"
-    // 冷却水
-    val LQ_yield_Regex = "FT_LQD_0__Ft_Tm"
-    val LQ_IT_Regex = "TE_LQJD_01_Temp_Tm"
-    val LQ_OT_Regex = "TE_LQCD_01_Temp_Tm"
-    // 总电耗
-    val ALL_ZNDB_Regex = "ZNDB%Wp_Tm"
-    // =========================================================
+    
+    // TODO 包装成对象，方法里边直接传入对象
+    // 常量参数
+    val water_specificHeat: Double = if(settings.getProperty("water_specificHeat") == null){
+      defaults.getProperty("water_specificHeat").toDouble
+    }else{settings.getProperty("water_specificHeat").toDouble}
+    
+    val water_density: Double = if(settings.getProperty("water_density") == null){
+      defaults.getProperty("water_density").toDouble
+    }else{settings.getProperty("water_density").toDouble}
+   
+    val air_specificHeat: Double = if(settings.getProperty("air_specificHeat") == null){
+    	defaults.getProperty("air_specificHeat").toDouble
+    }else{settings.getProperty("air_specificHeat").toDouble}
+    
+    val air_density: Double = if(settings.getProperty("air_density") == null){
+    	defaults.getProperty("air_density").toDouble
+    }else{settings.getProperty("air_density").toDouble}
+    
+    // 设定参数
+    val run_time: Double = if(settings.getProperty("run_time") == null){
+    	defaults.getProperty("run_time").toDouble
+    }else{settings.getProperty("run_time").toDouble} // 系统设置值
+    
+    val KT_F: Double = if(settings.getProperty("KT_F") == null){
+    	defaults.getProperty("KT_F").toDouble
+    }else{settings.getProperty("KT_F").toDouble} // 系统设定值
+    
+    val HPF_F: Double = if(settings.getProperty("HPF_F") == null){
+    	defaults.getProperty("HPF_F").toDouble
+    }else{settings.getProperty("HPF_F").toDouble} // 系统设定值
+    
+    // 指标标准
+    val LSJZ_standard: Double = if(settings.getProperty("LSJZ_standard") == null){
+    	defaults.getProperty("LSJZ_standard").toDouble
+    }else{settings.getProperty("LSJZ_standard").toDouble}
+    
+    val LD_standard: Double = if(settings.getProperty("LD_standard") == null){
+    	defaults.getProperty("LD_standard").toDouble
+    }else{settings.getProperty("LD_standard").toDouble}
+    
+    val LQ_standard: Double = if(settings.getProperty("LQ_standard") == null){
+    	defaults.getProperty("LQ_standard").toDouble
+    }else{settings.getProperty("LQ_standard").toDouble}
+    
+    val LT_standard: Double = if(settings.getProperty("LT_standard") == null){
+    	defaults.getProperty("LT_standard").toDouble
+    }else{settings.getProperty("LT_standard").toDouble}
+    
+    val DKT_standard: Double = if(settings.getProperty("DKT_standard") == null){
+    	defaults.getProperty("DKT_standard").toDouble
+    }else{settings.getProperty("DKT_standard").toDouble}
+    
+    val LL_standard: Double = if(settings.getProperty("LL_standard") == null){
+    	defaults.getProperty("LL_standard").toDouble
+    }else{settings.getProperty("LL_standard").toDouble}
+    
+    val power_standard: Double = if(settings.getProperty("power_standard") == null){
+    	defaults.getProperty("power_standard").toDouble
+    }else{settings.getProperty("power_standard").toDouble}
+    
+    val XL_standard: Double = if(settings.getProperty("XL_standard") == null){
+    	defaults.getProperty("XL_standard").toDouble
+    }else{settings.getProperty("XL_standard").toDouble}
+    
+    val HFT_standard: Double = if(settings.getProperty("HFT_standard") == null){
+    	defaults.getProperty("HFT_standard").toDouble
+    }else{settings.getProperty("HFT_standard").toDouble}
+
+    // 创建正则对象
+    val regexEntity = new RegexEntity
 
     // 创建sparksession
     val spark = SparkSession
@@ -113,17 +139,17 @@ object ProcessingHisdata {
     import spark.implicits._
 
     // 静态表名
-    val point = "point"
-    val center = "center"
-    val line = "line"
+    val point = defaults.getProperty("point")
+    val center = defaults.getProperty("center")
+    val line = defaults.getProperty("line")
     // 历史数据表名
-    val hisdataYC = "hisdataYC"
-    val hisdataYX = "hisdataYX"
+    val hisdataYC = defaults.getProperty("hisdataYC")
+    val hisdataYX = defaults.getProperty("hisdataYX")
     // 状态记录表名
-    val hisstatus = "hisstatus"
+    val hisstatus = defaults.getProperty("hisstatus")
     // KPI表名
-    val KPI_real = "KPI_real"
-    val KPI_day = "KPI_day"
+    val KPI_real = defaults.getProperty("KPI_real")
+    val KPI_day = defaults.getProperty("KPI_day")
 
     // KPI表的字段名
     val KPI_fields = ArrayBuffer[String]("abbreviation", "time", "d1", "d2", "d3", "d4", "d5", "d10", "d15", "d20", "d24")
@@ -221,7 +247,7 @@ object ProcessingHisdata {
       spark.createDataFrame(tableRDD, schema).filter($"time" > lastDay && $"time" < endTime).createTempView(tablename)
       // SELECT t1.* FROM `hisdata` t1 ,(SELECT MAX(TIME) AS mt,abbr,id FROM `hisdata` GROUP BY abbr,id) t2 WHERE t1.id=t2.id AND t1.time =t2.mt AND t1.abbr=t2.abbr;
       spark.sql(s"SELECT data.* FROM `${tablename}` data ,(SELECT MAX(time) AS mt,abbreviation,id FROM `${tablename}` GROUP BY abbreviation,id) t WHERE data.id=t.id AND data.time =t.mt AND data.abbreviation=t.abbreviation")
-           .cache()
+        .cache()
     }
     // ========================================
 
@@ -292,6 +318,7 @@ object ProcessingHisdata {
     }*/
     // ========================================
 
+    try {
     // 创建各个表临时视图
     val hisdataYC_DF = hisdataYCToDF(hisdataYC)
     if (hisdataYC_DF.count() == 0) {
@@ -363,19 +390,19 @@ object ProcessingHisdata {
             val station_abbr = station.getString(1)
 
             val sum_KPI = KPI_real_DF.filter($"abbreviation" === station_abbr)
-                                     .agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum")
-                                     .select("sum(d2)", "sum(d3)", "sum(d4)", "sum(d5)", "sum(d10)", "sum(d15)", "sum(d20)", "sum(d24)")
-                                     .collect()
+              .agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum")
+              .select("sum(d2)", "sum(d3)", "sum(d4)", "sum(d5)", "sum(d10)", "sum(d15)", "sum(d20)", "sum(d24)")
+              .collect()
             val sum_status = hisstatus_DF.filter($"abbreviation" === station_abbr)
-                                         .agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum")
-                                         .select("sum(d2)", "sum(d3)", "sum(d4)", "sum(d5)", "sum(d10)", "sum(d15)", "sum(d20)", "sum(d24)")
-                                         .collect()
+              .agg("d2" -> "sum", "d3" -> "sum", "d4" -> "sum", "d5" -> "sum", "d10" -> "sum", "d15" -> "sum", "d20" -> "sum", "d24" -> "sum")
+              .select("sum(d2)", "sum(d3)", "sum(d4)", "sum(d5)", "sum(d10)", "sum(d15)", "sum(d20)", "sum(d24)")
+              .collect()
 
             // 计算各项指标
             // 电耗d1
             val area = line_DF.select("area").filter($"lineName" === lineName && $"stationName" === stationName).collect()(0).getString(0).toDouble
             // 赋值24小时总能耗
-            var IDs = selectByRegex(ALL_ZNDB_Regex, lineName, stationName)
+            var IDs = selectByRegex(regexEntity.getALL_ZNDB_Regex, lineName, stationName)
             var IDAndValue = selectConsumptionData(IDs, lastDay, station_abbr)
             var consumption = assign_powerConsumption(IDAndValue)
             var result = getIndicatorPower(consumption, area)
@@ -385,24 +412,24 @@ object ProcessingHisdata {
               d1 = 100 - (result - power_standard)./(result).*(100)
             }
             // 赋值回风温度
-            IDs = selectByRegex(HF_T_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getHF_T_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             var HF_T = assign_instant(IDAndValue)
             // 赋值室内温度
-            IDs = selectByRegex(ZTX_T_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getZTX_T_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             var ZT_T = assign_instant(IDAndValue)
-            IDs = selectByRegex(ZTS_T_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getZTS_T_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             ZT_T = (ZT_T + assign_instant(IDAndValue))./(2)
             // 赋值送风机运行状态
-            IDs = selectByRegex(KT_Run_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getKT_Run_Regex, lineName, stationName)
             IDAndValue = selectYXData(IDs, station_abbr)
             SF_run_status = assign_runStatus(IDAndValue)
             // 赋值运行状态
             if (SF_run_status == 0) {
               // 获取排风机运行状态
-              IDs = selectByRegex(HPF_Run_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getHPF_Run_Regex, lineName, stationName)
               IDAndValue = selectYXData(IDs, station_abbr)
               d2_Status = assign_runStatus(IDAndValue)
               d3_Status = d2_Status
@@ -424,21 +451,21 @@ object ProcessingHisdata {
               IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
               consumption = assign_powerConsumption(IDAndValue)
               // 赋值送风机频率
-              IDs = selectByRegex(KT_Hz_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getKT_Hz_Regex, lineName, stationName)
               IDAndValue = selectYCData(IDs, station_abbr)
               var KT_Hz = assign_instant(IDAndValue)
               // 赋值回排风机频率
-              IDs = selectByRegex(HPF_Hz_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getHPF_Hz_Regex, lineName, stationName)
               IDAndValue = selectYCData(IDs, station_abbr)
               var HPF_Hz = assign_instant(IDAndValue)
               // 赋值进风量
               var air_yield = getAirYield(HPF_Hz, KT_Hz)
               // 赋值送风温度
-              IDs = selectByRegex(SF_T_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getSF_T_Regex, lineName, stationName)
               IDAndValue = selectYCData(IDs, station_abbr)
               var SF_T = assign_instant(IDAndValue)
               // 赋值新风温度
-              IDs = selectByRegex(XF_T_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getXF_T_Regex, lineName, stationName)
               IDAndValue = selectYCData(IDs, station_abbr)
               var XF_T = assign_instant(IDAndValue)
               // 效率d2
@@ -460,10 +487,10 @@ object ProcessingHisdata {
                 d3 = 100
               }
               // 重新赋值20分钟风机能耗
-              IDs = selectByRegex(KT_ZNDB_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getKT_ZNDB_Regex, lineName, stationName)
               IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
               consumption = assign_powerConsumption(IDAndValue)
-              IDs = selectByRegex(HPF_ZNDB_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getHPF_ZNDB_Regex, lineName, stationName)
               IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
               consumption = consumption + assign_powerConsumption(IDAndValue)
               // 大系统通风d24
@@ -493,19 +520,24 @@ object ProcessingHisdata {
             }
             d4_sumStatus = d4_Status + getKPIDay(sum_status, 2)
             // 赋值冷冻水瞬时流量
-            IDs = selectByRegex(LD_yield_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLD_yield_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             var water_yield = assign_instant(IDAndValue)
+            if(water_yield == 0){
+              // 从外部配置文件中读取瞬时流量数据
+              // TODO 瞬时流量参数配置公用一个，还是每个站一个？
+              water_yield = settings.getProperty("").toDouble
+            }
             // 赋值冷冻水的供、回水温度
-            IDs = selectByRegex(LD_IT_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLD_IT_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             var water_IT = assign_instant(IDAndValue)
-            IDs = selectByRegex(LD_OT_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLD_OT_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             var water_OT = assign_instant(IDAndValue)
             // 冷机d5
             // 赋值冷机运行状态
-            IDs = selectByRegex(LSJZ_Run_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLSJZ_Run_Regex, lineName, stationName)
             IDAndValue = selectYXData(IDs, station_abbr)
             d5_Status = assign_runStatus(IDAndValue)
             d5_sumStatus = d5_Status + getKPIDay(sum_status, 3)
@@ -513,7 +545,7 @@ object ProcessingHisdata {
               d5 = 0
             } else {
               // 赋值20分钟冷机能耗
-              IDs = selectByRegex(LSJZ_ZNDB_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getLSJZ_ZNDB_Regex, lineName, stationName)
               IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
               consumption = assign_powerConsumption(IDAndValue)
               if (consumption == 0) {
@@ -529,7 +561,7 @@ object ProcessingHisdata {
             }
             // 冷冻泵d10
             // 赋值冷冻泵运行状态
-            IDs = selectByRegex(LDB_Run_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLDB_Run_Regex, lineName, stationName)
             IDAndValue = selectYXData(IDs, station_abbr)
             d10_Status = assign_runStatus(IDAndValue)
             d10_sumStatus = d10_Status + getKPIDay(sum_status, 4)
@@ -537,7 +569,7 @@ object ProcessingHisdata {
               d10 = 0
             } else {
               // 赋值20分钟冷冻泵能耗
-              IDs = selectByRegex(LDB_ZNDB_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getLDB_ZNDB_Regex, lineName, stationName)
               IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
               consumption = assign_powerConsumption(IDAndValue)
               if (consumption == 0) {
@@ -552,19 +584,24 @@ object ProcessingHisdata {
               }
             }
             // 赋值冷却水瞬时流量
-            IDs = selectByRegex(LQ_yield_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLQ_yield_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             water_yield = assign_instant(IDAndValue)
+            if(water_yield == 0){
+              // 从外部配置文件中读取瞬时流量数据
+              // TODO 瞬时流量参数配置公用一个，还是每个站一个？
+              water_yield = settings.getProperty("").toDouble
+            }
             // 赋值冷却水的供、回水温度
-            IDs = selectByRegex(LQ_IT_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLQ_IT_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             water_IT = assign_instant(IDAndValue)
-            IDs = selectByRegex(LQ_OT_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLQ_OT_Regex, lineName, stationName)
             IDAndValue = selectYCData(IDs, station_abbr)
             water_OT = assign_instant(IDAndValue)
             // 冷却泵d15
             // 赋值冷却泵运行状态
-            IDs = selectByRegex(LQB_Run_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLQB_Run_Regex, lineName, stationName)
             IDAndValue = selectYXData(IDs, station_abbr)
             d15_Status = assign_runStatus(IDAndValue)
             d15_sumStatus = d15_Status + getKPIDay(sum_status, 5)
@@ -572,7 +609,7 @@ object ProcessingHisdata {
               d15 = 0
             } else {
               // 赋值20分钟冷却泵能耗
-              IDs = selectByRegex(LQB_ZNDB_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getLQB_ZNDB_Regex, lineName, stationName)
               IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
               consumption = assign_powerConsumption(IDAndValue)
               if (consumption == 0) {
@@ -588,7 +625,7 @@ object ProcessingHisdata {
             }
             // 冷冻塔d20
             // 赋值冷冻塔运行状态
-            IDs = selectByRegex(LT_Run_Regex, lineName, stationName)
+            IDs = selectByRegex(regexEntity.getLT_Run_Regex, lineName, stationName)
             IDAndValue = selectYXData(IDs, station_abbr)
             d20_Status = assign_runStatus(IDAndValue)
             d20_sumStatus = d20_Status + getKPIDay(sum_status, 6)
@@ -596,7 +633,7 @@ object ProcessingHisdata {
               d20 = 0
             } else {
               // 赋值20分钟冷冻塔能耗
-              IDs = selectByRegex(LT_ZNDB_Regex, lineName, stationName)
+              IDs = selectByRegex(regexEntity.getLT_ZNDB_Regex, lineName, stationName)
               IDAndValue = selectConsumptionData(IDs, startTime, station_abbr)
               consumption = assign_powerConsumption(IDAndValue)
               if (consumption == 0) {
@@ -685,8 +722,9 @@ object ProcessingHisdata {
     saveToHbase(KPI_real, KPIs_real)
     saveToHbase(hisstatus, KPIs_status)
     saveToHbase(KPI_day, KPIs_day)
-
+    
     println("Done!")
+    spark.stop()
 
     // =================== 查询所需历史数据数据的方法 ===================
     // 根据type查询对应表controlID数据
@@ -767,7 +805,7 @@ object ProcessingHisdata {
     // 平均值数据(瞬时流量，进出水温度，温度，频率)
     def assign_instant(IDAndValue: Array[Row]): Double = {
       if (IDAndValue.length == 0) {
-        // TODO 如果没有瞬时流量指标，则读取配置文件
+        // TODO 如果没有瞬时流量指标，则读取配置文件。（不在此处处理，赋值后再进行判定）
         return 0
       } else {
         var value: Double = 0
@@ -823,6 +861,9 @@ object ProcessingHisdata {
       }
     }
     // ========================================
+    } catch {
+      case t: Throwable => t.printStackTrace() // TODO: handle error
+    }
   }
   // 将scan配置的conf前先转换为string
   def convertScanToString(scan: Scan) = {

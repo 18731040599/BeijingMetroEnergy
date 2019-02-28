@@ -28,6 +28,7 @@ object FileToHbase {
       properties.load(new FileInputStream(new File("defaults.properties")))
     } catch {
       case t: Throwable => t.printStackTrace()
+      println("Error reading default configuration file!")
     }
     // /opt/modules/test/data/
     // F:/java/mysql/
