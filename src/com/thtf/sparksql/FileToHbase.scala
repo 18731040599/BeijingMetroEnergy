@@ -12,6 +12,7 @@ import java.text.SimpleDateFormat
 import java.util.{ Calendar, Properties }
 import java.io.{ File, FilenameFilter, FileInputStream }
 import com.thtf.entity.DateEntity
+import com.thtf.entity.HbaseConfEntity
 
 /**
  * 将txt类型的文件中的数据存到hbase表中
@@ -20,25 +21,44 @@ object FileToHbase {
   def main(args: Array[String]): Unit = {
 
     // 时间
-    val endTime = new DateEntity().getCurrentTime
+    if(args.length == 0){
+      println("No time value is passed in !")
+      return
+    }
+    if(args.length > 1 || args(0).length() != 14){
+    	println("Wrong time format for input !")
+    	return
+    }
+    val endTime = args(0)
 
     // 读取配置文件
-    val properties = new Properties
+    val defaults = new Properties
     try {
-      properties.load(new FileInputStream(new File("defaults.properties")))
+      defaults.load(new FileInputStream(new File("defaults.properties")))
     } catch {
       case t: Throwable => t.printStackTrace()
       println("Error reading default configuration file!")
     }
+    
+    // 从外部配置文件中读取需要变更的参数
+    val settings = new Properties
+    try {
+      settings.load(new FileInputStream(new File("settings.properties")))
+    } catch {
+      case t: Throwable =>
+        t.printStackTrace()
+        println("Error reading settings configuration file!")
+    }
     // /opt/modules/test/data/
     // F:/java/mysql/
-    var filepath = "/opt/modules/test/data/"
+    var filepath = settings.getProperty("secure_file_priv")
     if (!filepath.endsWith("/")) {
       filepath += "/"
     }
     val file = new File(filepath)
     if (!file.isDirectory()) {
       throw new RuntimeException(filepath + ": No such directory")
+      return
     }
     val files = file.list(new FilenameFilter() {
       def accept(dir: File, name: String): Boolean = {
@@ -72,6 +92,21 @@ object FileToHbase {
       "center" -> center_fields,
       "line" -> line_fields,
       "point" -> point_fields)
+      
+    // 静态表名
+    val point = defaults.getProperty("point")
+    val center = defaults.getProperty("center")
+    val line = defaults.getProperty("line")
+    // 历史数据表名
+    val hisdataYC = defaults.getProperty("hisdataYC")
+    val hisdataYX = defaults.getProperty("hisdataYX")
+    // 状态记录表名
+    val hisstatus = defaults.getProperty("hisstatus")
+    // KPI表名
+    val KPI_real = defaults.getProperty("KPI_real")
+    val KPI_day = defaults.getProperty("KPI_day")
+    // 列族名
+    val columnFamily = defaults.getProperty("columnFamily")
 
     // 改变列名
     //df_csv.withColumnRenamed("_c0", "id").show()
@@ -85,9 +120,7 @@ object FileToHbase {
     */
 
     // 定义Hbase的配置
-    val conf = HBaseConfiguration.create()
-    conf.set("hbase.zookeeper.property.clientPort", "2181")
-    conf.set("hbase.zookeeper.quorum", "stest")
+    val conf = HbaseConfEntity.getHbaseConf()
     // 指定输出格式和输出表名
     val jobConf = new JobConf(conf, this.getClass)
     jobConf.setOutputFormat(classOf[TableOutputFormat])
@@ -103,11 +136,11 @@ object FileToHbase {
         val rdd = sc.textFile(filepath + f).map(line => {
           line.split("\t")
         })
-        if (fs(1).dropRight(4) == "point") {
+        if (fs(1).dropRight(4) == point) {
           val resultRdd = rdd.map(row => {
             val p = new Put(Bytes.toBytes(row(1) + row(3) + row(4)))
             for (i <- 0 to row.length - 1) {
-              p.addColumn(Bytes.toBytes("c"), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
+              p.addColumn(Bytes.toBytes(columnFamily), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
             }
             (new ImmutableBytesWritable, p)
           })
@@ -116,14 +149,14 @@ object FileToHbase {
           val resultRdd = rdd.map(row => {
             val p = new Put(Bytes.toBytes(row(1)))
             for (i <- 0 to row.length - 1) {
-              p.addColumn(Bytes.toBytes("c"), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
+              p.addColumn(Bytes.toBytes(columnFamily), Bytes.toBytes(tables.getOrElse(fs(1).dropRight(4), null)(i)), Bytes.toBytes(row(i)))
             }
             (new ImmutableBytesWritable, p)
           })
           resultRdd.saveAsHadoopDataset(jobConf)
         }
       } else if (fs.length == 4) {
-        jobConf.set(TableOutputFormat.OUTPUT_TABLE, "hisdataYX")
+        jobConf.set(TableOutputFormat.OUTPUT_TABLE, hisdataYX)
         // 读取文件转化为RDD
         val sc = spark.sparkContext
         val rdd = sc.textFile(filepath + f).map(line => {
@@ -131,12 +164,12 @@ object FileToHbase {
         })
         val resultRdd = rdd.map(row => {
           val p = new Put(Bytes.toBytes(fs(3).dropRight(4) + row(0) + row(1).replaceAll("[^0-9]", "")))
-          p.addColumn(Bytes.toBytes("c"), Bytes.toBytes("value"), Bytes.toBytes(row(2)))
+          p.addColumn(Bytes.toBytes(columnFamily), Bytes.toBytes("value"), Bytes.toBytes(row(2)))
           (new ImmutableBytesWritable, p)
         })
         resultRdd.saveAsHadoopDataset(jobConf)
       } else if (fs.length == 5) {
-        jobConf.set(TableOutputFormat.OUTPUT_TABLE, "hisdataYC")
+        jobConf.set(TableOutputFormat.OUTPUT_TABLE, hisdataYC)
         // 读取文件转化为RDD
         val sc = spark.sparkContext
         val rdd = sc.textFile(filepath + f).map(line => {
@@ -146,7 +179,7 @@ object FileToHbase {
           val p = new Put(Bytes.toBytes(fs(3) + row(0).replaceAll("[^0-9]", "")))
           val columns = (fs(4).dropRight(4).toInt - 1).*(200)
           for (i <- 1 to row.length - 1) {
-            p.addColumn(Bytes.toBytes("c"), Bytes.toBytes((columns + i - 1).toString()), Bytes.toBytes(row(i)))
+            p.addColumn(Bytes.toBytes(columnFamily), Bytes.toBytes((columns + i - 1).toString()), Bytes.toBytes(row(i)))
           }
           (new ImmutableBytesWritable, p)
         })
